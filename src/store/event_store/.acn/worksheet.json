@@ -1,0 +1,191 @@
+{
+  "db_connection_pool_manager": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "673EA3FAD8ABF3095C7E175EF26628159097DD7EF8C24D44B5AB7DEAAF3ED849",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Production-ready PostgreSQL connection pool management implementation using the 'pg' library with strict Zod configuration validation and security enforcement.",
+      "filename": "client.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/client.ts",
+      "id": "ce375004-2669-40d4-bbde-60e51f8be8d5",
+      "provenance_data": {
+        "behaviour": "Implements a production-ready PostgreSQL connection pool manager as a singleton. Handles environment-based configuration, strict Zod validation, SSL/TLS enforcement, robust lifecycle management, connection health checks, and metrics/observability hooks. Uses node-postgres (pg) library for connection pooling.",
+        "interfaces": [
+          "public static getInstance(): PostgresPoolManager",
+          "public async initialize(): Promise<void>",
+          "public getPool(): Pool",
+          "public getStats(): PoolStats",
+          "public logConfiguration(): void"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides a secure, high-performance, and monitored PostgreSQL connection management layer compliant with production standards."
+      },
+      "source_code": "import { Pool, PoolConfig } from 'pg';\nimport { z } from 'zod';\n\n/**\n * Configuration schema for the PostgreSQL connection pool.\n * Enforces production-grade validation constraints.\n */\nconst PostgresConfigSchema = z.object({\n  DB_URL: z.string().url(),\n  DB_POOL_MIN: z.preprocess((val) => Number(val), z.number().int().positive()),\n  DB_POOL_MAX: z.preprocess((val) => Number(val), z.number().int().positive()),\n}).refine((data) => data.DB_POOL_MIN <= data.DB_POOL_MAX, {\n  message: \"DB_POOL_MIN cannot be greater than DB_POOL_MAX\",\n  path: [\"DB_POOL_MIN\"],\n});\n\n/**\n * Interface for pool statistics monitoring.\n */\nexport interface PoolStats {\n  totalCount: number;\n  idleCount: number;\n  waitingCount: number;\n}\n\n/**\n * PostgresPoolManager handles the lifecycle of the database connection pool.\n * Implements a singleton pattern for application-wide connection management\n * in a high-throughput, event-sourced fraud detection engine.\n */\nexport class PostgresPoolManager {\n  private static instance: PostgresPoolManager;\n  private pool: Pool;\n  private initialized: boolean = false;\n\n  private constructor() {\n    const rawConfig = {\n      DB_URL: process.env.DB_URL,\n      DB_POOL_MIN: process.env.DB_POOL_MIN,\n      DB_POOL_MAX: process.env.DB_POOL_MAX,\n    };\n\n    const result = PostgresConfigSchema.safeParse(rawConfig);\n    if (!result.success) {\n      throw new Error(`Postgres Configuration Error: ${JSON.stringify(result.error.format())}`);\n    }\n\n    // Security constraint: Production environments MUST use SSL/TLS\n    if (process.env.NODE_ENV === 'production' && !process.env.DB_URL?.includes('sslmode=verify-full')) {\n      throw new Error('Insecure database connection detected: SSL/TLS with verify-full is mandatory in production.');\n    }\n\n    const config: PoolConfig = {\n      connectionString: result.data.DB_URL,\n      min: result.data.DB_POOL_MIN,\n      max: result.data.DB_POOL_MAX,\n      connectionTimeoutMillis: 5000,\n      idleTimeoutMillis: 30000,\n    };\n\n    this.pool = new Pool(config);\n\n    // Register error listener for robust operational monitoring\n    this.pool.on('error', (err, client) => {\n      console.error(JSON.stringify({\n        level: 'error',\n        message: 'Unexpected error on idle client',\n        error: err.message,\n        stack: err.stack,\n        context: 'PostgresPoolManager'\n      }));\n    });\n  }\n\n  /**\n   * Initializes the pool and performs a connectivity health check.\n   * Provides a fail-fast mechanism for the persistence layer.\n   */\n  public async initialize(): Promise<void> {\n    if (this.initialized) return;\n\n    try {\n      const client = await this.pool.connect();\n      try {\n        await client.query('SELECT 1');\n      } finally {\n        client.release();\n      }\n      this.initialized = true;\n    } catch (err) {\n      throw new Error(`Postgres health check failed during initialization: ${err instanceof Error ? err.message : String(err)}`);\n    }\n  }\n\n  /**\n   * Returns the singleton instance of PostgresPoolManager.\n   */\n  public static getInstance(): PostgresPoolManager {\n    if (!PostgresPoolManager.instance) {\n      PostgresPoolManager.instance = new PostgresPoolManager();\n    }\n    return PostgresPoolManager.instance;\n  }\n\n  /**\n   * Provides access to the underlying node-postgres Pool.\n   */\n  public getPool(): Pool {\n    return this.pool;\n  }\n\n  /**\n   * Returns current pool statistics for observability purposes.\n   * Can be mapped to Prometheus metrics.\n   */\n  public getStats(): PoolStats {\n    return {\n      totalCount: this.pool.totalCount,\n      idleCount: this.pool.idleCount,\n      waitingCount: this.pool.waitingCount,\n    };\n  }\n\n  /**\n   * Redacted configuration logging for security compliance.\n   * Ensures credentials are not exposed in logs.\n   */\n  public logConfiguration(): void {\n    const dbUrl = process.env.DB_URL || '';\n    // Redact password part of the connection string\n    const redactedUrl = dbUrl.replace(/:([^@]+)@/, ':****@');\n    console.info(JSON.stringify({\n      level: 'info',\n      message: 'Postgres connection pool configured',\n      url: redactedUrl\n    }));\n  }\n}\n",
+      "timestamp": "2026-03-23T01:23:23.201702Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "EF65E91C3ADB8201C17ADA3F60166975C9CE2819F42405F9EA2D5186B5EBD3EA",
+    "timestamp": 1774229003
+  },
+  "event_repository_implementation_class": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "9e25d30922880159491024317926107412852174620581457186918451871239561081239512395812395812",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Implementation of the EventRepository class, providing high-throughput, atomic event sourcing operations with cryptographic integrity guarantees and optimistic concurrency control.",
+      "filename": "repository.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/repository.ts",
+      "id": "a96659ff-ccd2-4759-b3a1-1e6eb5cc83b4",
+      "provenance_data": {
+        "behaviour": "Provides atomic, serializable event appending and cryptographically verified event stream loading. Uses PostgreSQL transactions for optimistic concurrency control and standard node-postgres for database interactions. Maintains Prometheus metrics for observability.",
+        "interfaces": [
+          "public async append(aggregateId: string, event: MessageEnvelope<T>, version: bigint): Promise<void>",
+          "public async load(aggregateId: string): Promise<MessageEnvelope<T>[]>"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides a secure, performant, and observable interface for event-sourced persistence in a high-throughput transaction processing engine."
+      },
+      "source_code": "import { PoolClient } from 'pg';\nimport { Registry, Histogram } from 'prom-client';\nimport { PostgresPoolManager } from './client';\nimport { CryptoValidator } from '../../../core/domain_models/security/crypto-validator.service';\nimport { MessageEnvelope } from '../../../core/domain_models/messaging/event-envelope.messaging';\nimport { Transaction } from '../../../core/domain_models/definitions/transaction.interface';\nimport {\n  OptimisticConcurrencyError,\n  IntegrityViolationError,\n  ConnectionError,\n} from './errors';\n\n/**\n * EventRepository implementation for PostgreSQL-backed append-only event store.\n * Provides atomic append and versioned loading operations with cryptographic integrity checks.\n */\nexport class EventRepository<T extends Transaction> {\n  private readonly poolManager: PostgresPoolManager;\n  private readonly cryptoValidator: CryptoValidator;\n  \n  // Performance metrics\n  private readonly sqlExecutionDuration: Histogram<string>;\n  private readonly cryptoVerificationDuration: Histogram<string>;\n\n  constructor(registry: Registry) {\n    this.poolManager = PostgresPoolManager.getInstance();\n    this.cryptoValidator = CryptoValidator.getInstance();\n\n    this.sqlExecutionDuration = new Histogram({\n      name: 'event_store_sql_execution_seconds',\n      help: 'Duration of SQL operations in seconds',\n      registers: [registry],\n      labelNames: ['operation'],\n    });\n\n    this.cryptoVerificationDuration = new Histogram({\n      name: 'event_store_crypto_verification_seconds',\n      help: 'Duration of cryptographic verification in seconds',\n      registers: [registry],\n    });\n  }\n\n  /**\n   * Appends a new event to the stream for a given aggregate.\n   * Enforces optimistic concurrency and transactional integrity.\n   */\n  public async append(aggregateId: string, event: MessageEnvelope<T>, version: bigint): Promise<void> {\n    const client = await this.acquireClient();\n    const start = process.hrtime.bigint();\n\n    try {\n      await client.query('BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE');\n\n      // Check current version for optimistic concurrency\n      const { rows } = await client.query(\n        'SELECT version FROM events WHERE aggregate_id = $1 ORDER BY version DESC LIMIT 1 FOR UPDATE',\n        [aggregateId]\n      );\n\n      const currentVersion = rows.length > 0 ? BigInt(rows[0].version) : 0n;\n      if (version !== currentVersion + 1n) {\n        throw new OptimisticConcurrencyError(aggregateId, version, currentVersion + 1n);\n      }\n\n      await client.query(\n        `INSERT INTO events (aggregate_id, version, event_type, payload, signature, created_at)\n         VALUES ($1, $2, $3, $4, $5, NOW())`,\n        [\n          aggregateId,\n          version.toString(),\n          event.payload.type,\n          JSON.stringify(event.payload),\n          event.signature,\n        ]\n      );\n\n      await client.query('COMMIT');\n      this.recordDuration(this.sqlExecutionDuration, 'append', start);\n    } catch (err) {\n      await client.query('ROLLBACK');\n      throw err;\n    } finally {\n      client.release();\n    }\n  }\n\n  /**\n   * Loads the event stream for a specific aggregate ID.\n   * Performs cryptographic verification on every loaded event.\n   */\n  public async load(aggregateId: string): Promise<MessageEnvelope<T>[]> {\n    const client = await this.acquireClient();\n    const start = process.hrtime.bigint();\n\n    try {\n      const { rows } = await client.query(\n        'SELECT * FROM events WHERE aggregate_id = $1 ORDER BY version ASC',\n        [aggregateId]\n      );\n\n      const envelopes: MessageEnvelope<T>[] = [];\n\n      for (const row of rows) {\n        const envelope: MessageEnvelope<T> = {\n          metadata: {\n            schemaVersion: 'v1.0',\n            createdAtNs: BigInt(new Date(row.created_at).getTime() * 1_000_000),\n            provenanceTrace: 'db_load',\n          },\n          payload: row.payload as T,\n          signature: row.signature,\n        };\n\n        // Cryptographic verification\n        const cryptoStart = process.hrtime.bigint();\n        const dataToVerify = JSON.stringify({ metadata: envelope.metadata, payload: envelope.payload });\n        const isValid = await this.cryptoValidator.verify(dataToVerify, envelope.signature);\n        this.recordDuration(this.cryptoVerificationDuration, 'verify', cryptoStart);\n\n        if (!isValid) {\n          throw new IntegrityViolationError(aggregateId, row.event_id, 'Cryptographic signature verification failed');\n        }\n\n        envelopes.push(envelope);\n      }\n\n      this.recordDuration(this.sqlExecutionDuration, 'load', start);\n      return envelopes;\n    } finally {\n      client.release();\n    }\n  }\n\n  private async acquireClient(): Promise<PoolClient> {\n    try {\n      return await this.poolManager.getPool().connect();\n    } catch (err) {\n      throw new ConnectionError(err instanceof Error ? err.message : 'Unknown connection error', this.poolManager.getStats());\n    }\n  }\n\n  private recordDuration(histogram: Histogram<string>, label: string, start: bigint): void {\n    const end = process.hrtime.bigint();\n    const duration = Number(end - start) / 1e9;\n    histogram.labels(label).observe(duration);\n  }\n}\n",
+      "timestamp": "2026-03-23T01:24:24.861016Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "7C8B9AEBC6DCAF37E26E335582236498771DFAF9C9D3792A714B2F507937182E",
+    "timestamp": 1774229064
+  },
+  "event_store_schema_query": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "9B1FA6C8EC9FA867017C2C2CE7855FD327EBBB0CF786609B8931D5A0FC046421",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "SQL DDL for the events table in PostgreSQL, implementing an immutable transaction log.",
+      "filename": "schema.sql",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/schema.sql",
+      "id": "daa8022b-5c5c-4a2e-b593-1029d0696545",
+      "provenance_data": {
+        "behaviour": "Defines the PostgreSQL schema for the immutable event store. Includes UUID generation, optimistic concurrency control via unique versioning per aggregate, JSONB payload storage, and optimized indexing (GIN, B-Tree, BRIN) for high-throughput event sourcing and state reconstruction.",
+        "interfaces": [],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides the relational storage layer for the event-sourced fraud detection engine, ensuring immutable, ordered, and high-performance event persistence."
+      },
+      "source_code": "-- Event Store Schema DDL\n-- This script defines the immutable transaction log for the fraud detection engine.\n-- Designed for high throughput and consistent event sourcing.\n\nBEGIN;\n\n-- Enable UUID extension if not already available\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";\n\n-- Main events table storing immutable transaction logs.\n-- Append-only access policy should be enforced at the database role level.\nCREATE TABLE IF NOT EXISTS events (\n    event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n    aggregate_id UUID NOT NULL,\n    version BIGINT NOT NULL,\n    event_type VARCHAR(255) NOT NULL,\n    payload JSONB NOT NULL,\n    signature TEXT NOT NULL,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\n\n    -- Optimistic Concurrency Control: Ensures each aggregate has a unique\n    -- version sequence, preventing race conditions on updates.\n    CONSTRAINT unique_aggregate_version UNIQUE (aggregate_id, version)\n);\n\n-- Indexing Strategy:\n\n-- 1. GIN index on 'payload' for efficient querying of JSONB data.\n-- This allows fast retrieval based on nested fields within the event payload.\nCREATE INDEX IF NOT EXISTS idx_events_payload_gin ON events USING GIN (payload);\n\n-- 2. B-Tree index on (aggregate_id, version) for fast stream loading.\n-- This is crucial for reconstructing aggregate state by loading events in\n-- their correct sequence.\nCREATE INDEX IF NOT EXISTS idx_events_aggregate_sequence ON events (aggregate_id, version);\n\n-- 3. BRIN index on 'created_at' for efficient range scans by time.\n-- This helps in audit log retrieval and provides a foundation for future \n-- table partitioning strategies by date.\nCREATE INDEX IF NOT EXISTS idx_events_created_at_brin ON events USING BRIN (created_at);\n\n-- Set comment for clarity\nCOMMENT ON TABLE events IS 'Immutable transaction log for event sourcing';\nCOMMENT ON COLUMN events.payload IS 'JSONB event data payload';\nCOMMENT ON COLUMN events.signature IS 'HMAC-SHA256 signature for data integrity';\nCOMMENT ON COLUMN events.version IS 'Sequential version number per aggregate for optimistic locking';\n\nCOMMIT;\n",
+      "timestamp": "2026-03-23T01:22:49.045299Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "0ED8DE4BDA5804A98E8F9813422F21897440AC4854EC064C27FA4B30F1911241",
+    "timestamp": 1774228969
+  },
+  "module_requirements_def": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "1566BE326517B530B96750119C959353ABD6565902616E35D5F4930E971F6471",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Implementation of the PostgresPoolManager for high-throughput, secure PostgreSQL database connection pooling.",
+      "filename": "client.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/client.ts",
+      "id": "25c79ad5-d1ba-4a30-9d5a-c6920956d859",
+      "provenance_data": {
+        "behaviour": "Initializes a production-ready PostgreSQL connection pool using the 'pg' library with strict validation via Zod. Manages the connection lifecycle, performs health checks, and enforces TLS for production environments. Ensures thread-safe access to the database pool as a singleton instance.",
+        "interfaces": [
+          "public static getInstance(): PostgresPoolManager",
+          "public async initialize(): Promise<void>",
+          "public getPool(): Pool",
+          "public getStats(): PoolStats",
+          "public logConfiguration(): void"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides a secure, high-performance, and monitored PostgreSQL connection management layer compliant with production standards."
+      },
+      "source_code": "import { Pool, PoolConfig } from 'pg';\nimport { z } from 'zod';\n\n/**\n * Configuration schema for the PostgreSQL connection pool.\n */\nconst PostgresConfigSchema = z.object({\n  DB_URL: z.string().url(),\n  DB_POOL_MIN: z.preprocess((val) => Number(val), z.number().int().positive()),\n  DB_POOL_MAX: z.preprocess((val) => Number(val), z.number().int().positive()),\n}).refine((data) => data.DB_POOL_MIN <= data.DB_POOL_MAX, {\n  message: \"DB_POOL_MIN cannot be greater than DB_POOL_MAX\",\n  path: [\"DB_POOL_MIN\"],\n});\n\n/**\n * Interface for pool statistics monitoring.\n */\nexport interface PoolStats {\n  totalCount: number;\n  idleCount: number;\n  waitingCount: number;\n}\n\n/**\n * PostgresPoolManager handles the lifecycle of the database connection pool.\n * Implements a singleton pattern for application-wide connection management.\n */\nexport class PostgresPoolManager {\n  private static instance: PostgresPoolManager;\n  private pool: Pool;\n  private initialized: boolean = false;\n\n  private constructor() {\n    const rawConfig = {\n      DB_URL: process.env.DB_URL,\n      DB_POOL_MIN: process.env.DB_POOL_MIN,\n      DB_POOL_MAX: process.env.DB_POOL_MAX,\n    };\n\n    const result = PostgresConfigSchema.safeParse(rawConfig);\n    if (!result.success) {\n      throw new Error(`Postgres Configuration Error: ${JSON.stringify(result.error.format())}`);\n    }\n\n    if (process.env.NODE_ENV === 'production' && !process.env.DB_URL?.includes('sslmode=verify-full')) {\n      throw new Error('Insecure database connection detected: SSL/TLS is mandatory in production.');\n    }\n\n    const config: PoolConfig = {\n      connectionString: result.data.DB_URL,\n      min: result.data.DB_POOL_MIN,\n      max: result.data.DB_POOL_MAX,\n      connectionTimeoutMillis: 5000,\n      idleTimeoutMillis: 30000,\n    };\n\n    this.pool = new Pool(config);\n\n    this.pool.on('error', (err, client) => {\n      console.error(JSON.stringify({\n        level: 'error',\n        message: 'Unexpected error on idle client',\n        error: err.message,\n        stack: err.stack,\n        context: 'PostgresPoolManager'\n      }));\n    });\n  }\n\n  /**\n   * Initializes the pool and performs a connectivity health check.\n   */\n  public async initialize(): Promise<void> {\n    if (this.initialized) return;\n\n    try {\n      const client = await this.pool.connect();\n      await client.query('SELECT 1');\n      client.release();\n      this.initialized = true;\n    } catch (err) {\n      throw new Error(`Postgres health check failed during initialization: ${err instanceof Error ? err.message : String(err)}`);\n    }\n  }\n\n  /**\n   * Returns the singleton instance of PostgresPoolManager.\n   */\n  public static getInstance(): PostgresPoolManager {\n    if (!PostgresPoolManager.instance) {\n      PostgresPoolManager.instance = new PostgresPoolManager();\n    }\n    return PostgresPoolManager.instance;\n  }\n\n  /**\n   * Provides access to the underlying node-postgres Pool.\n   */\n  public getPool(): Pool {\n    return this.pool;\n  }\n\n  /**\n   * Returns current pool statistics for observability purposes.\n   */\n  public getStats(): PoolStats {\n    return {\n      totalCount: this.pool.totalCount,\n      idleCount: this.pool.idleCount,\n      waitingCount: this.pool.waitingCount,\n    };\n  }\n\n  /**\n   * Redacted configuration logging for security compliance.\n   */\n  public logConfiguration(): void {\n    const dbUrl = process.env.DB_URL || '';\n    const redactedUrl = dbUrl.replace(/:([^@]+)@/, ':****@');\n    console.info(JSON.stringify({\n      level: 'info',\n      message: 'Postgres connection pool configured',\n      url: redactedUrl\n    }));\n  }\n}\n",
+      "timestamp": "2026-03-23T01:22:05.122075Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "AFADB8C77A6B3EBAA4732E374D1B2F245DF51C78E37774FFB78473E9598B1DAF",
+    "timestamp": 1774228925
+  },
+  "store_exception_definitions_class": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "940E459F932D57E3830EECF99D43F10FFBD36A18FBAD5D2573187B912387CC5D",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Implementation of specialized error classes (OptimisticConcurrencyError, SerializationError, IntegrityViolationError, ConnectionError) for the Event Store.",
+      "filename": "errors.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/errors.ts",
+      "id": "e22349d0-72cd-43cf-abfc-120941148953",
+      "provenance_data": {
+        "behaviour": "Defines a hierarchy of custom error classes for the Event Store, enabling granular observability and structured handling of domain-specific failures like concurrency conflicts and integrity violations.",
+        "interfaces": [
+          "abstract class EventStoreError extends Error",
+          "class OptimisticConcurrencyError extends EventStoreError",
+          "class SerializationError extends EventStoreError",
+          "class IntegrityViolationError extends EventStoreError",
+          "class ConnectionError extends EventStoreError"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides standardized, structured error handling for the Event Store, supporting domain-specific recovery strategies and observability requirements."
+      },
+      "source_code": "/**\n * Base class for all Event Store errors.\n * Provides structured error context and standardized serialization for observability.\n */\nexport abstract class EventStoreError extends Error {\n  public readonly timestamp: number;\n\n  constructor(\n    public readonly code: string,\n    public readonly message: string,\n    public readonly context: Record<string, unknown>,\n    public readonly retryable: boolean\n  ) {\n    super(message);\n    this.name = 'EventStoreError';\n    this.timestamp = Date.now();\n    Error.captureStackTrace(this, this.constructor);\n  }\n\n  public toJSON(): Record<string, unknown> {\n    return {\n      name: this.name,\n      code: this.code,\n      message: this.message,\n      context: this.context,\n      retryable: this.retryable,\n      timestamp: this.timestamp,\n      stack: this.stack,\n    };\n  }\n}\n\n/**\n * Triggered when a version constraint (Optimistic Concurrency) fails in the database.\n */\nexport class OptimisticConcurrencyError extends EventStoreError {\n  constructor(\n    aggregateId: string,\n    expectedVersion: bigint,\n    actualVersion: bigint\n  ) {\n    super(\n      'ERR_CONCURRENCY_CONFLICT',\n      `Optimistic concurrency conflict for aggregate ${aggregateId}: expected version ${expectedVersion}, but found ${actualVersion}.`,\n      { aggregateId, expectedVersion: expectedVersion.toString(), actualVersion: actualVersion.toString() },\n      true\n    );\n    this.name = 'OptimisticConcurrencyError';\n  }\n}\n\n/**\n * Triggered when event payloads cannot be parsed or transformed for storage.\n */\nexport class SerializationError extends EventStoreError {\n  constructor(eventType: string, details: string) {\n    super(\n      'ERR_SERIALIZATION_FAILED',\n      `Failed to serialize event of type ${eventType}.`,\n      { eventType, details },\n      false\n    );\n    this.name = 'SerializationError';\n  }\n}\n\n/**\n * Triggered when cryptographic verification fails or a hash mismatch is detected.\n * This is a security-critical violation.\n */\nexport class IntegrityViolationError extends EventStoreError {\n  constructor(aggregateId: string, eventId: string, reason: string) {\n    super(\n      'ERR_INTEGRITY_VIOLATION',\n      `Integrity violation detected for aggregate ${aggregateId}, event ${eventId}: ${reason}`,\n      { aggregateId, eventId, reason },\n      false\n    );\n    this.name = 'IntegrityViolationError';\n  }\n}\n\n/**\n * Triggered by database connectivity issues, connection timeouts, or pool depletion.\n */\nexport class ConnectionError extends EventStoreError {\n  constructor(reason: string, poolStats?: Record<string, unknown>) {\n    super(\n      'ERR_CONNECTION_FAILURE',\n      `Database connection failure: ${reason}`,\n      { reason, poolStats: poolStats || {} },\n      true\n    );\n    this.name = 'ConnectionError';\n  }\n}\n",
+      "timestamp": "2026-03-23T01:23:21.541232Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "1F2F62A0DF13A2F70A7909D8894CA2D44E0A5E79F0EB2049729E9C050A5307D9",
+    "timestamp": 1774229001
+  },
+  "store_metrics_instrumentation_logic": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "F558A91799FE3723DB3597B7A321578DE0BD423D3F862B21A7D053E40181C2A1",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "High-precision observability wrapper for Event Store append and load operations.",
+      "filename": "metrics.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/store/event_store/postgres_impl/metrics.ts",
+      "id": "a326ba43-b0ed-481b-b413-29bc400a9cae",
+      "provenance_data": {
+        "behaviour": "Implements a production-ready metrics tracking utility for the Event Store, using Prometheus Histograms and Counters to track latency (P99/P95) and throughput. Operates as a singleton to maintain registry consistency.",
+        "interfaces": [
+          "public static initialize(registry: Registry): EventStoreMetrics",
+          "public static getInstance(): EventStoreMetrics",
+          "public recordDuration(histogram: Histogram<string>, startHrTime: bigint): void",
+          "public incrementOperation(operationType: 'append' | 'load', outcome: 'success' | 'failure'): void",
+          "public incrementError(errorType: string): void"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides standardized, production-ready observability for event store operations using Prometheus-compatible metrics."
+      },
+      "source_code": "import { Registry, Histogram, Counter } from 'prom-client';\n\n/**\n * EventStoreMetrics handles high-precision, low-overhead observability for the \n * PostgreSQL-backed Event Store.\n * \n * Provides P99/P95 latency tracking and operation throughput metrics.\n */\nexport class EventStoreMetrics {\n  private static instance: EventStoreMetrics;\n  private readonly registry: Registry;\n\n  public readonly appendDuration: Histogram<string>;\n  public readonly loadDuration: Histogram<string>;\n  public readonly operationsTotal: Counter<string>;\n  public readonly errorsTotal: Counter<string>;\n\n  // Optimized buckets for sub-millisecond to multi-second operations\n  private readonly buckets = [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0];\n\n  private constructor(registry: Registry) {\n    this.registry = registry;\n\n    this.appendDuration = new Histogram({\n      name: 'event_store_append_duration_seconds',\n      help: 'Duration of the append operation in seconds',\n      registers: [this.registry],\n      buckets: this.buckets,\n    });\n\n    this.loadDuration = new Histogram({\n      name: 'event_store_load_duration_seconds',\n      help: 'Duration of the load operation in seconds',\n      registers: [this.registry],\n      buckets: this.buckets,\n    });\n\n    this.operationsTotal = new Counter({\n      name: 'event_store_operations_total',\n      help: 'Total number of operations performed',\n      registers: [this.registry],\n      labelNames: ['operation_type', 'outcome'],\n    });\n\n    this.errorsTotal = new Counter({\n      name: 'event_store_errors_total',\n      help: 'Total number of domain-specific errors',\n      registers: [this.registry],\n      labelNames: ['error_type'],\n    });\n  }\n\n  /**\n   * Initializes the singleton instance of EventStoreMetrics.\n   */\n  public static initialize(registry: Registry): EventStoreMetrics {\n    if (!EventStoreMetrics.instance) {\n      EventStoreMetrics.instance = new EventStoreMetrics(registry);\n    }\n    return EventStoreMetrics.instance;\n  }\n\n  /**\n   * Returns the singleton instance.\n   */\n  public static getInstance(): EventStoreMetrics {\n    if (!EventStoreMetrics.instance) {\n      throw new Error('EventStoreMetrics has not been initialized');\n    }\n    return EventStoreMetrics.instance;\n  }\n\n  /**\n   * Records the duration of an operation.\n   * @param histogram The metric to observe.\n   * @param startHrTime The start time obtained via process.hrtime.bigint().\n   */\n  public recordDuration(histogram: Histogram<string>, startHrTime: bigint): void {\n    const endHrTime = process.hrtime.bigint();\n    const durationSeconds = Number(endHrTime - startHrTime) / 1e9;\n    histogram.observe(durationSeconds);\n  }\n\n  /**\n   * Increments the operations counter.\n   */\n  public incrementOperation(operationType: 'append' | 'load', outcome: 'success' | 'failure'): void {\n    this.operationsTotal.labels(operationType, outcome).inc();\n  }\n\n  /**\n   * Increments the errors counter.\n   */\n  public incrementError(errorType: string): void {\n    this.errorsTotal.labels(errorType).inc();\n  }\n}\n",
+      "timestamp": "2026-03-23T01:25:18.973489Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "C58ADB439E7F89CF46000CE0D6116AE53E3D71DB04B1F5EB5D4E0E071E6B3EB7",
+    "timestamp": 1774229118
+  }
+}

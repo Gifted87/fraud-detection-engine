@@ -1,0 +1,62 @@
+{
+  "consumer_dlq_handler": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "CBFBE5533FEDD790227F694A35E1E52B0E3A82D18CD91096D0CECC67A0CD3E5E",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Implementation of a production-ready Dead Letter Queue (DLQ) handler for the fraud detection engine, ensuring reliable event routing for failed processing attempts.",
+      "filename": "dlq-handler.ts",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/events/consumer/event_consumer_impl/dlq/dlq-handler.ts",
+      "id": "0f346ecc-b12e-4723-b85a-a20d85f36fa9",
+      "provenance_data": {
+        "behaviour": "Initializes a singleton-based Kafka DLQ handler that routes failed events with full metadata, error context, and original signature to a configured Kafka topic using GZIP compression. Features non-blocking asynchronous dispatch, Prometheus instrumentation for ingress metrics and latency, and robust producer lifecycle management.",
+        "interfaces": [
+          "public static initialize(kafka: Kafka, dlqTopic: string, registry: Registry, sourceComponent: string): DlqHandler",
+          "public static getInstance(): DlqHandler",
+          "public async connect(): Promise<void>",
+          "public async publish(payload: unknown, error: Error | string, context: { topic: string; partition: number; offset: string }, signature: string | null): Promise<void>",
+          "public async shutdown(): Promise<void>"
+        ],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides a production-grade mechanism to handle failed events within the fraud detection pipeline, ensuring data persistence and observability for post-mortem debugging."
+      },
+      "source_code": "import { Kafka, Producer, CompressionTypes } from 'kafkajs';\nimport { Registry, Counter, Histogram, Gauge } from 'prom-client';\n\n/**\n * Custom error thrown when DLQ configuration is invalid or missing.\n */\nexport class DlqConfigurationError extends Error {\n  constructor(message: string) {\n    super(message);\n    this.name = 'DlqConfigurationError';\n  }\n}\n\n/**\n * Custom error thrown when a message fails to be published to the DLQ.\n */\nexport class DlqPublishError extends Error {\n  constructor(message: string, public readonly originalError?: unknown) {\n    super(message);\n    this.name = 'DlqPublishError';\n  }\n}\n\n/**\n * Interface for DLQ entry structure.\n */\nexport interface DlqEntry {\n  readonly metadata: {\n    readonly timestamp: number;\n    readonly sourceComponent: string;\n    readonly errorType: string;\n    readonly originalTopic: string;\n    readonly originalPartition: number;\n    readonly originalOffset: string;\n  };\n  readonly payload: unknown;\n  readonly signature: string | null;\n}\n\n/**\n * DLQHandler component for managing dead-letter queue operations.\n * Implements a singleton pattern with non-blocking async publishing.\n */\nexport class DlqHandler {\n  private static instance: DlqHandler;\n  private readonly producer: Producer;\n  private readonly topic: string;\n  private readonly metrics: {\n    ingressTotal: Counter<string>;\n    publishLatency: Histogram<string>;\n    bufferLength: Gauge<string>;\n  };\n  private pendingCount = 0;\n\n  private constructor(\n    kafka: Kafka,\n    dlqTopic: string,\n    registry: Registry,\n    sourceComponent: string\n  ) {\n    this.topic = dlqTopic;\n    this.producer = kafka.producer({\n      idempotent: true,\n      maxInFlightRequests: 1,\n      retry: {\n        initialRetryTime: 300,\n        retries: 8,\n      },\n    });\n\n    this.metrics = {\n      ingressTotal: new Counter({\n        name: 'dlq_ingress_total',\n        help: 'Total events routed to DLQ',\n        registers: [registry],\n        labelNames: ['error_type', 'source_component'],\n      }),\n      publishLatency: new Histogram({\n        name: 'dlq_publish_latency_seconds',\n        help: 'Latency of DLQ publish operations',\n        registers: [registry],\n        buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1.0],\n      }),\n      bufferLength: new Gauge({\n        name: 'dlq_buffer_length',\n        help: 'Items currently in DLQ processing pipeline',\n        registers: [registry],\n      }),\n    };\n  }\n\n  /**\n   * Initializes the DLQHandler singleton.\n   */\n  public static initialize(\n    kafka: Kafka,\n    dlqTopic: string,\n    registry: Registry,\n    sourceComponent: string\n  ): DlqHandler {\n    if (!DlqHandler.instance) {\n      DlqHandler.instance = new DlqHandler(kafka, dlqTopic, registry, sourceComponent);\n    }\n    return DlqHandler.instance;\n  }\n\n  public static getInstance(): DlqHandler {\n    if (!DlqHandler.instance) {\n      throw new DlqConfigurationError('DlqHandler not initialized');\n    }\n    return DlqHandler.instance;\n  }\n\n  /**\n   * Connects the producer to the Kafka broker.\n   */\n  public async connect(): Promise<void> {\n    await this.producer.connect();\n  }\n\n  /**\n   * Publishes an event to the DLQ in a non-blocking manner.\n   * \n   * @param payload Original event payload.\n   * @param error Error object or string describing failure.\n   * @param context Contextual info (topic, offset).\n   * @param signature Cryptographic signature of the original message.\n   */\n  public async publish(\n    payload: unknown,\n    error: Error | string,\n    context: { topic: string; partition: number; offset: string },\n    signature: string | null = null\n  ): Promise<void> {\n    const errorType = error instanceof Error ? error.name : 'UnknownError';\n    const startTime = process.hrtime.bigint();\n    \n    this.metrics.ingressTotal.labels(errorType, 'event_consumer').inc();\n    this.pendingCount++;\n    this.metrics.bufferLength.set(this.pendingCount);\n\n    // Offload to promise pipeline without awaiting completion here\n    this.executePublish(payload, error, context, signature, startTime).catch((err) => {\n      console.error('Failed to publish to DLQ', err);\n    });\n  }\n\n  private async executePublish(\n    payload: unknown,\n    error: Error | string,\n    context: { topic: string; partition: number; offset: string },\n    signature: string | null,\n    startTime: bigint\n  ): Promise<void> {\n    try {\n      const entry: DlqEntry = {\n        metadata: {\n          timestamp: Date.now(),\n          sourceComponent: 'fraud-detection-engine',\n          errorType: error instanceof Error ? error.name : 'UnknownError',\n          originalTopic: context.topic,\n          originalPartition: context.partition,\n          originalOffset: context.offset,\n        },\n        payload,\n        signature,\n      };\n\n      const key = `${context.offset}:${entry.metadata.errorType}`;\n\n      await this.producer.send({\n        topic: this.topic,\n        messages: [{ key, value: JSON.stringify(entry) }],\n        compression: CompressionTypes.GZIP,\n      });\n\n      const endTime = process.hrtime.bigint();\n      this.metrics.publishLatency.observe(Number(endTime - startTime) / 1e9);\n    } catch (err) {\n      throw new DlqPublishError('Could not write to DLQ', err);\n    } finally {\n      this.pendingCount--;\n      this.metrics.bufferLength.set(this.pendingCount);\n    }\n  }\n\n  /**\n   * Gracefully shuts down the producer, flushing all buffers.\n   */\n  public async shutdown(): Promise<void> {\n    await this.producer.disconnect();\n  }\n}\n",
+      "timestamp": "2026-03-23T01:53:27.630395Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "1CE568B86801E0A183AE34BBFD226224AC6643CC92E1BB5CF6AD1345DC3402BA",
+    "timestamp": 1774230807
+  },
+  "consumer_requirements_file": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "F143B587481FC0008809A72E7BC1ECA34A765FA689D8CBECF6A5BE7E72EDD1D1",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Requirements file pinning production-grade dependencies for the fraud detection event consumer service.",
+      "filename": "requirements.txt",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/src/events/consumer/event_consumer_impl/requirements.txt",
+      "id": "55d433ae-606e-4868-95fb-c06aa3b4f89f",
+      "provenance_data": {
+        "behaviour": "Defines the required production dependencies for the event consumer service to ensure runtime environment consistency and performance stability.",
+        "interfaces": [],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Ensures reproducible build and execution environment by strictly pinning dependencies."
+      },
+      "source_code": "kafkajs==2.2.4\nioredis==5.3.2\nprom-client==15.0.0\nzod==3.22.4",
+      "timestamp": "2026-03-23T01:54:41.248982Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "266BEA43CDDD35659C125455D3FDFA06B0BC4382765BB4B3725268555A5F5E43",
+    "timestamp": 1774230881
+  }
+}

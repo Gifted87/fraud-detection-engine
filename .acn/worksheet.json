@@ -1,0 +1,56 @@
+{
+  "dependency_manifest_config": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "4f35e9854d92e5917462a6b2210a40d0407a55225028448c5e6834d9a6c72d1e",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Package manifest for the fraud detection engine with required production dependencies (kafkajs, ioredis, pg, fastify, zod, prom-client) and build scripts.",
+      "filename": "package.json",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/config/package.json",
+      "id": "97349b53-0eda-44f6-ba57-e1dce974fae6",
+      "provenance_data": {
+        "behaviour": "Defines production-grade dependency manifest for the real-time fraud detection engine, ensuring version pinning and strict environment configuration.",
+        "interfaces": [],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides the authoritative dependency management configuration for the Fraud Detection system, enforcing version pinning to guarantee reproducibility and production stability."
+      },
+      "source_code": "{\n  \"name\": \"fraud-detection-engine\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Production-grade real-time fraud detection and event sourcing engine\",\n  \"main\": \"dist/index.js\",\n  \"engines\": {\n    \"node\": \">=18.0.0\"\n  },\n  \"scripts\": {\n    \"build\": \"tsc --project tsconfig.json\",\n    \"lint\": \"eslint 'src/**/*.ts'\",\n    \"test\": \"jest --config jest.config.json\",\n    \"start\": \"node dist/index.js\"\n  },\n  \"dependencies\": {\n    \"kafkajs\": \"2.2.4\",\n    \"ioredis\": \"5.3.2\",\n    \"pg\": \"8.11.3\",\n    \"fastify\": \"4.25.2\",\n    \"zod\": \"3.22.4\",\n    \"prom-client\": \"15.0.0\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"20.11.0\",\n    \"@types/jest\": \"29.5.11\",\n    \"@typescript-eslint/eslint-plugin\": \"6.19.0\",\n    \"@typescript-eslint/parser\": \"6.19.0\",\n    \"eslint\": \"8.56.0\",\n    \"jest\": \"29.7.0\",\n    \"ts-jest\": \"29.1.1\",\n    \"typescript\": \"5.3.3\"\n  }\n}",
+      "timestamp": "2026-03-23T01:18:04.861467Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "A6199593A3A7E81099572A7D203D37FF2366BC28F876BAD4DE45A0E8DCD1D6DE",
+    "timestamp": 1774228685
+  },
+  "typescript_compiler_config": {
+    "content": {
+      "acms_node_id": null,
+      "artifact_hash": "9a8f4c2e6b1d3f7a5c9e8b2d1f4a7c3b9e6d2f8a4c1b7e3f9d5a6c2b8f4e1d7a",
+      "author_id": "agent_node_nonode@nohost",
+      "constituents": null,
+      "cost_metrics": null,
+      "fact_text": "Strict TypeScript compiler configuration for the real-time fraud detection engine.",
+      "filename": "tsconfig.json",
+      "full_path": "/home/gifted/acn/tmp/acn_workspaces/fraud_detection_engine/config/tsconfig.json",
+      "id": "dc24c3f6-ee61-4fb0-991a-a90f78be13dc",
+      "provenance_data": {
+        "behaviour": "Configures the TypeScript compiler for the fraud detection engine with strict type checking, ES2022 compatibility, and specific node16 module resolution, ensuring high-reliability and memory-safe production builds.",
+        "interfaces": [],
+        "node": "nonode@nohost",
+        "schema": {},
+        "utility": "Provides the mandatory compilation contract for the high-throughput, type-safe production-grade system."
+      },
+      "source_code": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"node16\",\n    \"moduleResolution\": \"node16\",\n    \"strict\": true,\n    \"noImplicitAny\": true,\n    \"strictNullChecks\": true,\n    \"strictFunctionTypes\": true,\n    \"strictBindCallApply\": true,\n    \"strictPropertyInitialization\": true,\n    \"noImplicitThis\": true,\n    \"alwaysStrict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"outDir\": \"./dist\",\n    \"rootDir\": \"./src\",\n    \"declaration\": true,\n    \"sourceMap\": true,\n    \"removeComments\": false,\n    \"noUnusedLocals\": true,\n    \"noUnusedParameters\": true,\n    \"noFallthroughCasesInSwitch\": true,\n    \"resolveJsonModule\": true\n  },\n  \"include\": [\n    \"src/**/*\"\n  ],\n  \"exclude\": [\n    \"node_modules\",\n    \"dist\",\n    \"**/*.spec.ts\",\n    \"**/*.test.ts\"\n  ]\n}",
+      "timestamp": "2026-03-23T01:18:45.912337Z",
+      "validation_proof": null,
+      "verifier_id": "judge_bot"
+    },
+    "type": "artifact",
+    "hash": "66FE98B642212FD8D21ABA199912A06BCC9B6244245BA2FB1C2C789D3F164B3B",
+    "timestamp": 1774228725
+  }
+}
