@@ -4,7 +4,8 @@
  * alerting, and performance observability.
  */
 
-import { TransactionId, UserId, MerchantId, MonetaryAmount, Telemetry } from '../../../../core/domain_models/common/domain-types';
+import { TransactionId, UserId, MerchantId, MonetaryAmount } from '../../../../core/domain_models/common/domain-types';
+import { Telemetry } from '../../../../core/domain_models/definitions/transaction.interface';
 
 /**
  * A branded type for numerical risk scores, providing compile-time safety

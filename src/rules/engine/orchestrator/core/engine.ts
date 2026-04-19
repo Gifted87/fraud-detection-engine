@@ -7,12 +7,12 @@
 import {
   Transaction,
   isTransactionValidated,
-} from '../../../../../core/domain_models/definitions/transaction.interface';
-import { RuleRegistry } from '../../registry/dynamic_rules/registry/rule-registry';
+} from '../../../../core/domain_models/definitions/transaction.interface';
+import { RuleRegistry } from '../../../registry/dynamic_rules/registry/rule-registry';
 import { AlertingSubsystem } from '../alerts/alerts';
-import { RiskAggregator } from '../contracts/orchestrator_contracts';
-import { OrchestrationMetricsCollector } from '../metrics/orchestration-metrics-collector';
-import { RiskScore, RuleResult, OrchestrationFailure } from '../contracts/orchestrator_contracts';
+import { RiskAggregator } from '../contracts/engine-contracts';
+import { OrchestrationMetricsCollector } from '../metrics/metrics';
+import { RiskScore, RuleResult, OrchestrationFailure } from '../contracts/engine-contracts';
 
 /**
  * Orchestrator configuration

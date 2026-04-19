@@ -58,7 +58,9 @@ export class EventEnvelopeFactory {
       payload,
     };
 
-    const serializedData = JSON.stringify(envelopePayload);
+    const serializedData = JSON.stringify(envelopePayload, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    );
     
     let signature: string;
     try {
@@ -84,7 +86,9 @@ export class EventEnvelopeFactory {
   public static async verifyEnvelope<T extends Transaction>(envelope: MessageEnvelope<T>): Promise<boolean> {
     const { signature, ...dataToVerify } = envelope;
     
-    const serializedData = JSON.stringify(dataToVerify);
+    const serializedData = JSON.stringify(dataToVerify, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    );
     
     let isValid: boolean;
     try {

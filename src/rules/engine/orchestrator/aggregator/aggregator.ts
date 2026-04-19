@@ -8,8 +8,8 @@ import {
   RiskScore,
   asRiskScore,
   RiskAggregator,
-} from '../contracts/contracts';
-import { MetricsCollector } from '../../../../../utils/metrics/metrics-collector';
+} from '../contracts/engine-contracts';
+import { MetricsCollector } from '../../../../utils/metrics/metrics-collector';
 
 /**
  * Concrete implementation of the RiskAggregator.

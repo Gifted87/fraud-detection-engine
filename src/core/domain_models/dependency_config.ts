@@ -1,4 +1,4 @@
-import { CryptoManager } from '../utils/security/security_manager';
+import { CryptoManager } from '../../utils/security/crypto';
 
 /**
  * Interface defining the strict configuration schema for the application.

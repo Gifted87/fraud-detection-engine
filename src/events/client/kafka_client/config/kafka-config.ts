@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Registry } from 'prom-client';
+import { Registry, Gauge } from 'prom-client';
 
 /**
  * Zod schema for runtime validation of Kafka configuration.
@@ -48,6 +48,22 @@ export class KafkaConfigProvider {
   private constructor(env: NodeJS.ProcessEnv, metrics: Registry) {
     this.metrics = metrics;
 
+    // Initialize metrics if they don't exist
+    if (!this.metrics.getSingleMetric('config_validation_failure')) {
+      new Gauge({
+        name: 'config_validation_failure',
+        help: '1 if Kafka configuration validation failed',
+        registers: [this.metrics],
+      });
+    }
+    if (!this.metrics.getSingleMetric('config_validation_success')) {
+      new Gauge({
+        name: 'config_validation_success',
+        help: '1 if Kafka configuration validation succeeded',
+        registers: [this.metrics],
+      });
+    }
+
     const rawConfig = {
       brokers: (env.KAFKA_BROKERS || '').split(',').filter(Boolean),
       clientId: env.KAFKA_CLIENT_ID || 'fraud-detection-engine',
@@ -83,12 +99,12 @@ export class KafkaConfigProvider {
 
     if (!result.success) {
       // Instrument validation failure
-      this.metrics.getSingleMetric('config_validation_failure')?.set(1);
+      (this.metrics.getSingleMetric('config_validation_failure') as Gauge<string>)?.set(1);
       throw new Error(`Kafka configuration validation failed: ${JSON.stringify(result.error.format())}`);
     }
 
     this.config = Object.freeze(result.data);
-    this.metrics.getSingleMetric('config_validation_success')?.set(1);
+    (this.metrics.getSingleMetric('config_validation_success') as Gauge<string>)?.set(1);
   }
 
   /**
@@ -97,6 +113,16 @@ export class KafkaConfigProvider {
   public static initialize(env: NodeJS.ProcessEnv, metrics: Registry): KafkaConfigProvider {
     if (!KafkaConfigProvider.instance) {
       KafkaConfigProvider.instance = new KafkaConfigProvider(env, metrics);
+    }
+    return KafkaConfigProvider.instance;
+  }
+
+  /**
+   * Retrieves the singleton instance.
+   */
+  public static getInstance(): KafkaConfigProvider {
+    if (!KafkaConfigProvider.instance) {
+      throw new Error('KafkaConfigProvider not initialized. Call initialize() first.');
     }
     return KafkaConfigProvider.instance;
   }

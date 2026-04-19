@@ -2,7 +2,7 @@ import { Redis } from 'ioredis';
 import { 
   FraudRule, 
   RuleEvaluationResult 
-} from '../../contracts/fraud_rule.contract';
+} from '../../contracts/fraud-rule-contract';
 import { Transaction, Telemetry } from '../../../../../core/domain_models/definitions/transaction.interface';
 import { MetricsCollector } from '../../../../../utils/metrics/metrics-collector';
 
@@ -43,12 +43,19 @@ export class GeospatialRule implements FraudRule {
     };
 
     try {
-      const lastTelemetryRaw = await this.redis.get(redisKey);
+      const lastStateRaw = await this.redis.get(redisKey);
       
       // Update state for current transaction
-      await this.redis.set(redisKey, JSON.stringify(transaction.telemetry));
+      const currentState = {
+        telemetry: {
+          latitude: transaction.telemetry.latitude,
+          longitude: transaction.telemetry.longitude,
+        },
+        timestamp: transaction.timestamp.toString()
+      };
+      await this.redis.set(redisKey, JSON.stringify(currentState));
 
-      if (!lastTelemetryRaw) {
+      if (!lastStateRaw) {
         this.metrics.observeLatency(metricLabels, 'evaluate', startNs);
         return {
           isSuspicious: false,
@@ -57,24 +64,39 @@ export class GeospatialRule implements FraudRule {
         };
       }
 
-      const lastTelemetry: Telemetry = JSON.parse(lastTelemetryRaw);
+      const lastState = JSON.parse(lastStateRaw);
+      const lat1 = lastState.telemetry ? lastState.telemetry.latitude : lastState.latitude;
+      const lon1 = lastState.telemetry ? lastState.telemetry.longitude : lastState.longitude;
       const currentTelemetry = transaction.telemetry;
 
       const distanceKm = this.calculateDistance(
-        lastTelemetry.latitude,
-        lastTelemetry.longitude,
+        lat1,
+        lon1,
         currentTelemetry.latitude,
         currentTelemetry.longitude
       );
 
-      // Convert timestamp from ns to hours
-      const timeElapsedHours = Number(transaction.timestamp - (BigInt(lastTelemetry.latitude) /* Placeholder for timestamp logic, assuming relative */ ? 0n : 0n)) / (1e9 * 3600);
-      // Correction: Use milliseconds from Date.now() or provided transaction timestamp
-      // Assuming event ingestion timestamps are consistent
-      const timeElapsedHoursActual = Math.abs(Date.now() - (/* Use last tx timestamp if stored, else approximate */ Date.now())) / 3600000;
+      // Calculate time difference in hours. 
+      // transaction.timestamp and lastState.timestamp are in nanoseconds (bigint).
+      const lastTimestamp = BigInt(lastState.timestamp);
+      const timeDiffNs = transaction.timestamp - lastTimestamp;
+      
+      // If time difference is negative or zero, we can't reliably calculate speed or it's an out-of-order event
+      if (timeDiffNs <= 0n) {
+          this.metrics.observeLatency(metricLabels, 'evaluate', startNs);
+          return {
+            isSuspicious: false,
+            riskScore: 0.0,
+            reason: 'Transaction is older than or same age as last recorded state (possible out-of-order event).'
+          };
+      }
 
-      const speed = timeElapsedHoursActual > 0 ? distanceKm / timeElapsedHoursActual : 0;
+      const timeElapsedHours = Number(timeDiffNs) / (1e9 * 3600);
+
+      const speed = distanceKm / timeElapsedHours;
       const isSuspicious = speed > this.SPEED_LIMIT_KMH;
+      
+      console.log('DEBUG:', { distanceKm, timeElapsedHours, speed, isSuspicious });
 
       this.metrics.observeLatency(metricLabels, 'evaluate', startNs);
       
@@ -87,6 +109,13 @@ export class GeospatialRule implements FraudRule {
       };
     } catch (error) {
       // Graceful degradation on error
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'GeospatialRule evaluation error',
+        ruleId: this.ruleId,
+        transactionId: transaction.transactionId,
+        error: error instanceof Error ? error.message : 'unknown'
+      }));
       return {
         isSuspicious: false,
         riskScore: 0.0,

@@ -1,10 +1,15 @@
 import { Kafka, Consumer, EachBatchPayload } from 'kafkajs';
-import { KafkaConfig, KafkaConfigProvider } from '../config/kafka-config-provider';
-import { MetricsManager } from '../telemetry/metrics-manager';
-import { EventEnvelopeFactory, MessageEnvelope } from '../../../../core/domain_models/messaging/event-envelope.messaging';
-import { TransactionSchema } from '../../../../core/events/client/kafka_client/contracts/contracts';
+import { KafkaConfig, KafkaConfigProvider } from '../config/kafka-config';
+import { MetricsManager } from '../telemetry/metrics';
+import { EventEnvelopeFactory, MessageEnvelope } from '../../../../core/domain_models/messaging/event-envelope.schema';
+import { TransactionSchema } from '../contracts/transaction.schemas';
 import { ProjectionStore } from '../../../../store/projection_store/projection-store';
 import { Transaction } from '../../../../core/domain_models/definitions/transaction.interface';
+
+/**
+ * Processor function type for custom business logic.
+ */
+export type MessageProcessor = (tx: Transaction) => Promise<void>;
 
 /**
  * Production-grade Kafka Consumer for the Fraud Detection Engine.
@@ -19,7 +24,8 @@ export class FraudEventConsumer {
 
   constructor(
     private readonly topic: string,
-    private readonly dlqTopic: string = 'fraud-dlq'
+    private readonly dlqTopic: string = 'fraud-dlq',
+    private readonly processor?: MessageProcessor
   ) {
     this.config = KafkaConfigProvider.getInstance().getConfig();
     this.metrics = MetricsManager.getInstance();
@@ -28,7 +34,7 @@ export class FraudEventConsumer {
     this.kafka = new Kafka({
       clientId: this.config.clientId,
       brokers: this.config.brokers,
-      sasl: this.config.sasl,
+      sasl: this.config.sasl as any,
       ssl: this.config.ssl,
     });
 
@@ -59,7 +65,12 @@ export class FraudEventConsumer {
           try {
             if (!message.value) continue;
 
-            const envelope = JSON.parse(message.value.toString()) as MessageEnvelope<Transaction>;
+            const envelope = JSON.parse(message.value.toString(), (key, value) => {
+              if (key === 'createdAtNs' || key === 'timestamp' || key === 'value') {
+                return BigInt(value);
+              }
+              return value;
+            }) as MessageEnvelope<Transaction>;
 
             // 1. Verify Integrity
             await EventEnvelopeFactory.verifyEnvelope(envelope);
@@ -71,7 +82,7 @@ export class FraudEventConsumer {
             }
 
             // 3. Process Projection
-            const tx = validation.data;
+            const tx = validation.data as Transaction;
             await this.projectionStore.processTransaction(
               tx.userId,
               tx.amount.value,
@@ -79,9 +90,13 @@ export class FraudEventConsumer {
               60 // Default 60s sliding window
             );
 
-            // 4. Success metrics and offset handling
+            // 4. Custom processing (e.g., RuleEngine)
+            if (this.processor) {
+              await this.processor(tx);
+            }
+
+            // 5. Success metrics and offset handling
             this.metrics.recordConsumerLatency({ environment, stream: this.topic }, startTime);
-            this.metrics.recordConsumerEventsConsumed({ environment, stream: this.topic });
             resolveOffset(message.offset);
 
           } catch (err) {
@@ -100,7 +115,7 @@ export class FraudEventConsumer {
               }]
             });
 
-            this.metrics.recordDlqIngressCount({ environment, stream: this.topic }, reason);
+            this.metrics.recordDlqIngress({ environment, stream: this.topic }, reason);
             resolveOffset(message.offset);
           }
           

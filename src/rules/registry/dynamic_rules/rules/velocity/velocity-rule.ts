@@ -1,5 +1,5 @@
 import { Histogram, Registry } from 'prom-client';
-import { FraudRule, RuleEvaluationResult } from '../../contracts/fraud_rule.contract';
+import { FraudRule, RuleEvaluationResult } from '../../contracts/fraud-rule-contract';
 import { Transaction } from '../../../../../core/domain_models/definitions/transaction.interface';
 import { ProjectionStore } from '../../../../../store/projection_store/projection-store';
 
@@ -42,7 +42,7 @@ export class VelocityRule implements FraudRule {
     const environment = process.env.NODE_ENV || 'production';
 
     try {
-      // 1. Fetch current transaction count for the user from ProjectionStore
+      // 1. Fetch current transaction count for the user from ProjectionStore within the sliding window
       const count = await this.projectionStore.getTransactionCount(transaction.userId, this.windowSizeSeconds);
 
       // 2. Evaluate against threshold

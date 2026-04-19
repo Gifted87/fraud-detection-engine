@@ -1,8 +1,8 @@
 import { Registry, Histogram, Counter } from 'prom-client';
 import { RuleRegistry } from '../registry/rule-registry';
-import { TransactionFactory } from '../../../../../core/domain_models';
-import { KafkaMessagingClient } from '../../../../../events/client/kafka_client';
-import { Transaction, TransactionValidated } from '../../../../../core/domain_models/definitions/transaction.interface';
+import { TransactionFactory } from '../../../../core/domain_models';
+import { KafkaMessagingClient } from '../../../../events/client/kafka_client';
+import { TransactionValidated } from '../../../../core/domain_models/definitions/transaction.interface';
 
 /**
  * RuleEngine Orchestrator
@@ -89,7 +89,7 @@ export class RuleEngine {
 
       // Threshold logic & flagging process
       if (evaluation.isSuspicious) {
-        await this.handleFlagging(event, evaluation.aggregateScore, evaluation.results.map(r => r.reason).join('; '));
+        await this.handleFlagging(event, evaluation.aggregateScore, evaluation.results.filter(r => r.isSuspicious).map(r => r.reason).join('; '));
         this.totalFlagged.labels(environment).inc();
       }
 
@@ -117,7 +117,7 @@ export class RuleEngine {
     riskScore: number,
     reason: string
   ): Promise<void> {
-    const flaggedEvent = await TransactionFactory.createTransactionFlagged(
+    const flaggedEvent = TransactionFactory.buildTransactionFlagged(
       event.transactionId,
       event.userId,
       event.merchantId,
@@ -127,6 +127,7 @@ export class RuleEngine {
       riskScore
     );
 
-    await this.kafkaClient.publish('transactions-flagged', flaggedEvent.payload);
+    // KafkaMessagingClient.publish will handle the signing and wrapping
+    await this.kafkaClient.publish('transactions-flagged', flaggedEvent);
   }
 }

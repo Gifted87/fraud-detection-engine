@@ -139,13 +139,17 @@ export class ProjectionStore {
   /**
    * Retrieves the count of transactions in the sliding window.
    */
-  public async getTransactionCount(userId: string): Promise<number> {
+  public async getTransactionCount(userId: string, windowSizeSeconds: number = 60): Promise<number> {
     const validatedUserId = UserIdSchema.parse(userId);
     const key = `user:${validatedUserId}:tx_history`;
     
+    const now = Date.now();
+    const windowStart = now - windowSizeSeconds * 1000;
+
     const start = process.hrtime.bigint();
-    const result = await this.redis.zcard(key);
-    this.recordLatency('zcard', start);
+    // Use ZCOUNT to only count transactions within the window
+    const result = await this.redis.zcount(key, windowStart, '+inf');
+    this.recordLatency('zcount', start);
     
     return result;
   }

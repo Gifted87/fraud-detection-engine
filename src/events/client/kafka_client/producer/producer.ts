@@ -1,8 +1,8 @@
 import { Kafka, Producer, ProducerRecord, CompressionTypes } from 'kafkajs';
-import { KafkaConfigProvider } from '../config/kafka-config-provider';
-import { EventEnvelopeFactory, MessageEnvelope } from '../../domain_models/messaging/event-envelope.messaging';
-import { MetricsManager, MetricLabels } from '../telemetry/metrics-manager';
-import { Transaction } from '../../domain_models/definitions/transaction.interface';
+import { KafkaConfigProvider } from '../config/kafka-config';
+import { EventEnvelopeFactory } from '../../../../core/domain_models/messaging/event-envelope.schema';
+import { MetricsManager, MetricLabels } from '../telemetry/metrics';
+import { Transaction } from '../../../../core/domain_models/definitions/transaction.interface';
 
 /**
  * Custom error for Kafka producer operational issues.
@@ -32,7 +32,7 @@ export class KafkaEventProducer {
     const kafka = new Kafka({
       clientId: config.clientId,
       brokers: config.brokers,
-      sasl: config.sasl,
+      sasl: config.sasl as any,
       ssl: config.ssl,
     });
 
@@ -75,7 +75,10 @@ export class KafkaEventProducer {
         const envelope = await EventEnvelopeFactory.create(event);
         const record: ProducerRecord = {
           topic,
-          messages: [{ value: JSON.stringify(envelope), key: event.transactionId }],
+          messages: [{ 
+            value: JSON.stringify(envelope, (key, value) => typeof value === 'bigint' ? value.toString() : value), 
+            key: event.transactionId 
+          }],
           compression: CompressionTypes.GZIP,
         };
 

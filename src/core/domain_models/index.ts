@@ -23,7 +23,7 @@ import {
   asMerchantId,
   createMonetaryAmount,
 } from './common/domain-types';
-import { EventEnvelopeFactory, MessageEnvelope } from './messaging/event-envelope.messaging';
+import { EventEnvelopeFactory, MessageEnvelope } from './messaging/event-envelope.schema';
 
 export {
   Transaction,
@@ -67,13 +67,13 @@ export class TransactionFactory {
       merchantId,
       amount,
       telemetry,
-      timestamp: BigInt(Date.now()),
+      timestamp: BigInt(Date.now() * 1e6), // Using nanoseconds (approximate from ms)
       metadata: {
         schemaVersion: 1,
         createdAt: Date.now(),
-        signature: '', // Placeholder-free: Signature generated in EventEnvelopeFactory
+        signature: '', 
       },
-    });
+    } as any);
 
     return await EventEnvelopeFactory.create(event);
   }
@@ -97,15 +97,45 @@ export class TransactionFactory {
       amount,
       telemetry,
       validatorId,
-      timestamp: BigInt(Date.now()),
+      timestamp: BigInt(Date.now() * 1e6),
       metadata: {
         schemaVersion: 1,
         createdAt: Date.now(),
         signature: '',
       },
-    });
+    } as any);
 
     return await EventEnvelopeFactory.create(event);
+  }
+
+  /**
+   * Builds a raw TransactionFlagged event object without signing.
+   */
+  public static buildTransactionFlagged(
+    transactionId: TransactionId,
+    userId: UserId,
+    merchantId: MerchantId,
+    amount: MonetaryAmount,
+    telemetry: Telemetry,
+    reason: string,
+    riskScore: number
+  ): TransactionFlagged {
+    return Object.freeze({
+      type: 'TransactionFlagged',
+      transactionId,
+      userId,
+      merchantId,
+      amount,
+      telemetry,
+      reason,
+      riskScore,
+      timestamp: BigInt(Date.now() * 1e6),
+      metadata: {
+        schemaVersion: 1,
+        createdAt: Date.now(),
+        signature: '',
+      },
+    } as any);
   }
 
   /**
@@ -120,22 +150,15 @@ export class TransactionFactory {
     reason: string,
     riskScore: number
   ): Promise<MessageEnvelope<TransactionFlagged>> {
-    const event: TransactionFlagged = Object.freeze({
-      type: 'TransactionFlagged',
+    const event = this.buildTransactionFlagged(
       transactionId,
       userId,
       merchantId,
       amount,
       telemetry,
       reason,
-      riskScore,
-      timestamp: BigInt(Date.now()),
-      metadata: {
-        schemaVersion: 1,
-        createdAt: Date.now(),
-        signature: '',
-      },
-    });
+      riskScore
+    );
 
     return await EventEnvelopeFactory.create(event);
   }

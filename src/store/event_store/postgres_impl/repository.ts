@@ -2,7 +2,7 @@ import { PoolClient } from 'pg';
 import { Registry, Histogram } from 'prom-client';
 import { PostgresPoolManager } from './client';
 import { CryptoValidator } from '../../../core/domain_models/security/crypto-validator.service';
-import { MessageEnvelope } from '../../../core/domain_models/messaging/event-envelope.messaging';
+import { MessageEnvelope } from '../../../core/domain_models/messaging/event-envelope.schema';
 import { Transaction } from '../../../core/domain_models/definitions/transaction.interface';
 import {
   OptimisticConcurrencyError,
@@ -113,7 +113,9 @@ export class EventRepository<T extends Transaction> {
 
         // Cryptographic verification
         const cryptoStart = process.hrtime.bigint();
-        const dataToVerify = JSON.stringify({ metadata: envelope.metadata, payload: envelope.payload });
+        const dataToVerify = JSON.stringify({ metadata: envelope.metadata, payload: envelope.payload }, (key, value) => 
+          typeof value === 'bigint' ? value.toString() : value
+        );
         const isValid = await this.cryptoValidator.verify(dataToVerify, envelope.signature);
         this.recordDuration(this.cryptoVerificationDuration, 'verify', cryptoStart);
 
@@ -135,7 +137,11 @@ export class EventRepository<T extends Transaction> {
     try {
       return await this.poolManager.getPool().connect();
     } catch (err) {
-      throw new ConnectionError(err instanceof Error ? err.message : 'Unknown connection error', this.poolManager.getStats());
+      const stats = this.poolManager.getStats();
+      throw new ConnectionError(
+        err instanceof Error ? err.message : 'Unknown connection error',
+        { ...stats }
+      );
     }
   }
 

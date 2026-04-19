@@ -6,6 +6,8 @@ import {
   randomBytes,
   scryptSync,
   KeyObject,
+  createPublicKey,
+  createPrivateKey,
 } from 'crypto';
 
 /**
@@ -46,12 +48,12 @@ export class CryptoManager {
   private constructor(encryptionKey: string, publicKeyPem: string, privateKeyPem: string) {
     // Derive a 32-byte key for AES-256
     this.aesKey = scryptSync(encryptionKey, 'salt', 32);
-    this.signingPublicKey = KeyObject.fromPublicKey({
+    this.signingPublicKey = createPublicKey({
       key: publicKeyPem,
       format: 'pem',
       type: 'spki',
     });
-    this.signingPrivateKey = KeyObject.fromPrivateKey({
+    this.signingPrivateKey = createPrivateKey({
       key: privateKeyPem,
       format: 'pem',
       type: 'pkcs8',

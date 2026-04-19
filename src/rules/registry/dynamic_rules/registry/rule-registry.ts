@@ -1,7 +1,7 @@
 import { Registry, Histogram } from 'prom-client';
 import { z } from 'zod';
-import { FraudRule, RuleEvaluationResult } from '../contracts/fraud_rule.contract';
-import { Transaction } from '../../../../../../core/domain_models/definitions/transaction.interface';
+import { FraudRule, RuleEvaluationResult } from '../contracts/fraud-rule-contract';
+import { Transaction } from '../../../../core/domain_models/definitions/transaction.interface';
 
 /**
  * Registry for managing and orchestrating FraudRule evaluation.

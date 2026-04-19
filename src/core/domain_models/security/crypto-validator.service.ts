@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual, Buffer } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * Custom error thrown when the CryptoValidator service is accessed before initialization.
