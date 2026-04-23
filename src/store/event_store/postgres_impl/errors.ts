@@ -36,13 +36,20 @@ export abstract class EventStoreError extends Error {
 export class OptimisticConcurrencyError extends EventStoreError {
   constructor(
     aggregateId: string,
-    expectedVersion: bigint,
-    actualVersion: bigint
+    expectedVersion?: bigint,
+    actualVersion?: bigint
   ) {
+    const msg = expectedVersion !== undefined && actualVersion !== undefined
+      ? `Optimistic concurrency conflict for aggregate ${aggregateId}: expected version ${expectedVersion}, but found ${actualVersion}.`
+      : `Optimistic concurrency conflict for aggregate ${aggregateId}.`;
     super(
       'ERR_CONCURRENCY_CONFLICT',
-      `Optimistic concurrency conflict for aggregate ${aggregateId}: expected version ${expectedVersion}, but found ${actualVersion}.`,
-      { aggregateId, expectedVersion: expectedVersion.toString(), actualVersion: actualVersion.toString() },
+      msg,
+      { 
+        aggregateId, 
+        expectedVersion: expectedVersion?.toString() ?? 'unknown', 
+        actualVersion: actualVersion?.toString() ?? 'unknown' 
+      },
       true
     );
     this.name = 'OptimisticConcurrencyError';

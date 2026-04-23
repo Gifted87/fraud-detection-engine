@@ -7,17 +7,32 @@ import { Registry } from 'prom-client';
 describe('GeospatialRule', () => {
   let redis: jest.Mocked<Redis>;
   let metrics: MetricsCollector;
+  let mockLogger: any;
   let rule: GeospatialRule;
 
   beforeEach(() => {
     redis = {
       get: jest.fn(),
       set: jest.fn(),
+      eval: jest.fn(),
     } as any;
     
     const registry = new Registry();
     metrics = MetricsCollector.initialize(registry);
-    rule = new GeospatialRule(redis, metrics);
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      fatal: jest.fn(),
+      debug: jest.fn()
+    };
+
+    rule = new GeospatialRule({
+      redis: redis as any,
+      metricsCollector: metrics,
+      logger: mockLogger,
+      config: { NODE_ENV: 'test' } as any
+    });
   });
 
   afterEach(() => {
@@ -30,14 +45,12 @@ describe('GeospatialRule', () => {
     const tx2Timestamp = 1000000000000000000n + BigInt(0.5 * 1e9 * 3600); // +0.5 hour
     
     const lastState = {
-      telemetry: {
-        latitude: 40.7128, // NY
-        longitude: -74.0060,
-      },
+      latitude: 40.7128, // NY
+      longitude: -74.0060,
       timestamp: tx1Timestamp.toString(),
     };
 
-    redis.get.mockResolvedValueOnce(JSON.stringify(lastState));
+    redis.eval.mockResolvedValueOnce(JSON.stringify(lastState));
 
     const transaction: Transaction = {
       type: 'TransactionInitiated',
@@ -54,10 +67,9 @@ describe('GeospatialRule', () => {
 
     const result = await rule.evaluate(transaction);
 
-    // Distance NY to Paris ~5837 km. Time 0.5h. Speed ~11674 km/h (> 900)
     expect(result.isSuspicious).toBe(true);
     expect(result.riskScore).toBe(0.9);
-    expect(result.reason).toContain('Impossible travel detected');
+    expect(result.reason).toContain('Impossible travel');
   });
 
   it('should not flag normal travel', async () => {
@@ -66,14 +78,12 @@ describe('GeospatialRule', () => {
     const tx2Timestamp = 1000000000000000000n + BigInt(10 * 1e9 * 3600); // +10 hours
     
     const lastState = {
-      telemetry: {
-        latitude: 40.7128, // NY
-        longitude: -74.0060,
-      },
+      latitude: 40.7128, // NY
+      longitude: -74.0060,
       timestamp: tx1Timestamp.toString(),
     };
 
-    redis.get.mockResolvedValueOnce(JSON.stringify(lastState));
+    redis.eval.mockResolvedValueOnce(JSON.stringify(lastState));
 
     const transaction: Transaction = {
       type: 'TransactionInitiated',
@@ -90,13 +100,12 @@ describe('GeospatialRule', () => {
 
     const result = await rule.evaluate(transaction);
 
-    // Speed ~583.7 km/h (< 900)
     expect(result.isSuspicious).toBe(false);
     expect(result.riskScore).toBe(0.0);
   });
 
   it('should handle warm-up phase (no previous telemetry)', async () => {
-    redis.get.mockResolvedValueOnce(null);
+    redis.eval.mockResolvedValueOnce(null);
 
     const transaction: Transaction = {
       type: 'TransactionInitiated',
@@ -115,6 +124,6 @@ describe('GeospatialRule', () => {
 
     expect(result.isSuspicious).toBe(false);
     expect(result.reason).toContain('warm-up phase');
-    expect(redis.set).toHaveBeenCalled();
+    expect(redis.eval).toHaveBeenCalled();
   });
 });

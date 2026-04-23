@@ -65,6 +65,15 @@ export class ProjectionStore {
   }
 
   /**
+   * Exposes the underlying Redis client for operations that need direct access
+   * (e.g., atomic INCR for event-version counters in the consumer pipeline).
+   * Prefer the domain-specific methods on this class where possible.
+   */
+  public getRedisClient(): Redis {
+    return this.redis;
+  }
+
+  /**
    * Atomically updates a user's balance and increments a sliding window counter.
    * Uses a Lua script to ensure consistency and minimize round-trips.
    */
@@ -86,16 +95,20 @@ export class ProjectionStore {
       local now = tonumber(ARGV[3])
       local windowStart = now - tonumber(ARGV[4]) * 1000
 
-      -- Update Balance
-      local newBalance = redis.call('INCRBY', balanceKey, amountDelta)
+      -- Attempt to add transaction ID to the set (strictly as a new element)
+      local isNewTransaction = redis.call('ZADD', zsetKey, now, txId)
 
-      -- Add to ZSET for sliding window
-      redis.call('ZADD', zsetKey, now, txId)
+      local currentBalance = redis.call('GET', balanceKey) or 0
       
-      -- Remove old items
+      -- Only update balance and history if this is the first time we see this txId
+      if isNewTransaction == 1 then
+        currentBalance = redis.call('INCRBY', balanceKey, amountDelta)
+      end
+      
+      -- Cleanup old items regardless
       redis.call('ZREMRANGEBYSCORE', zsetKey, '-inf', windowStart)
 
-      return newBalance
+      return currentBalance
     `;
 
     const start = process.hrtime.bigint();

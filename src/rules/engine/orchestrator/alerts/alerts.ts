@@ -7,6 +7,17 @@ import { Redis } from 'ioredis';
 import { KafkaMessagingClient } from '../../../../events/client/kafka_client';
 import { TransactionFactory, TransactionFlagged, TransactionId, UserId, MerchantId, MonetaryAmount, Telemetry } from '../../../../core/domain_models';
 import { MetricsCollector } from '../../../../utils/metrics/metrics-collector';
+import { Logger } from 'pino';
+
+import { SystemConfiguration } from '../../../../core/domain_models/dependency_config';
+
+interface Dependencies {
+  redis: Redis;
+  kafkaClient: KafkaMessagingClient;
+  metricsCollector: MetricsCollector;
+  logger: Logger;
+  config: SystemConfiguration;
+}
 
 /**
  * Interface for Alerting subsystem configuration.
@@ -19,45 +30,23 @@ export interface AlertingConfig {
  * AlertingSubsystem handles idempotent fraud flagging and Kafka dispatch.
  */
 export class AlertingSubsystem {
-  private static instance: AlertingSubsystem;
   private readonly redis: Redis;
   private readonly kafkaClient: KafkaMessagingClient;
   private readonly metrics: MetricsCollector;
+  private readonly logger: Logger;
   private readonly config: AlertingConfig;
+  private readonly environment: 'development' | 'production' | 'test';
 
-  private constructor(
-    redis: Redis,
-    kafkaClient: KafkaMessagingClient,
-    metrics: MetricsCollector,
-    config: AlertingConfig
-  ) {
+  constructor({ redis, kafkaClient, metricsCollector, logger, config }: Dependencies) {
     this.redis = redis;
     this.kafkaClient = kafkaClient;
-    this.metrics = metrics;
-    this.config = config;
+    this.metrics = metricsCollector;
+    this.logger = logger;
+    this.environment = config.NODE_ENV;
+    this.config = { idempotencyTtlSeconds: 3600 };
   }
 
-  /**
-   * Initializes or returns the singleton instance.
-   */
-  public static initialize(
-    redis: Redis,
-    kafkaClient: KafkaMessagingClient,
-    metrics: MetricsCollector,
-    config: AlertingConfig
-  ): AlertingSubsystem {
-    if (!AlertingSubsystem.instance) {
-      AlertingSubsystem.instance = new AlertingSubsystem(redis, kafkaClient, metrics, config);
-    }
-    return AlertingSubsystem.instance;
-  }
 
-  public static getInstance(): AlertingSubsystem {
-    if (!AlertingSubsystem.instance) {
-      throw new Error('AlertingSubsystem not initialized');
-    }
-    return AlertingSubsystem.instance;
-  }
 
   /**
    * Dispatches a flagged transaction event to Kafka with idempotency guarantees.
@@ -74,7 +63,7 @@ export class AlertingSubsystem {
   ): Promise<void> {
     const startNs = process.hrtime.bigint();
     const metricLabels = {
-      environment: (process.env.NODE_ENV as 'development' | 'production' | 'test') || 'production',
+      environment: this.environment,
       component: 'alerting_subsystem',
       stream_name: 'fraud_alerts',
     };
@@ -86,12 +75,7 @@ export class AlertingSubsystem {
 
       if (!setSuccess) {
         this.metrics.incrementThroughput(metricLabels, 'alert_deduplication_skipped');
-        console.log(JSON.stringify({
-          level: 'info',
-          message: 'Alert deduplication skipped',
-          transactionId,
-          reason: 'Already processed'
-        }));
+        this.logger.info({ transactionId }, 'Alert deduplication skipped: already processed');
         return;
       }
 
@@ -112,28 +96,24 @@ export class AlertingSubsystem {
       this.metrics.incrementThroughput(metricLabels, 'total_alerts_sent');
       this.metrics.observeLatency(metricLabels, 'dispatch_flag_success', startNs);
 
-      console.log(JSON.stringify({
-        level: 'info',
-        message: 'Transaction flagged successfully',
-        transactionId,
-        riskScore,
-        reasons: reason,
-        publicationStatus: 'success',
-        orchestrationVersion,
-        timestamp: Date.now()
-      }));
+      this.logger.info({ 
+        transactionId, 
+        riskScore, 
+        orchestrationVersion 
+      }, 'Transaction flagged successfully');
 
     } catch (error) {
+      // 4. Cleanup: Release the idempotency lock so that retries can successfully 
+      //    attempt publication again if the failure was transient.
+      const idempotencyKey = `fraud:alert:processed:${transactionId}`;
+      await this.redis.del(idempotencyKey);
+
       this.metrics.incrementThroughput(metricLabels, 'kafka_producer_error');
       
-      console.error(JSON.stringify({
-        level: 'critical',
-        message: 'Failed to dispatch fraud alert',
-        transactionId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        timestamp: Date.now()
-      }));
+      this.logger.error({ 
+        transactionId, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      }, 'Failed to dispatch fraud alert');
 
       // Re-throw to signal orchestrator to abort transaction if necessary
       throw error;

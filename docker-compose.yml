@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  fraud-engine:
+    build: .
+    environment:
+      - NODE_ENV=production
+      - DB_URL=postgres://postgres:postgres@postgres:5432/fraud_engine
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - SIGNING_KEY=prod-signing-key-placeholder
+      - ENCRYPTION_KEY=prod-encryption-key-placeholder
+      - CRYPTO_SALT=prod-salt-placeholder
+      - PUBLIC_KEY_PEM=placeholder
+      - PRIVATE_KEY_PEM=placeholder
+    ports:
+      - "9090:9090"
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    restart: always
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=fraud_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: bitnami/kafka:latest
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+volumes:
+  postgres_data:
+  redis_data:

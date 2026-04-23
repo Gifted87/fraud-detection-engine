@@ -8,6 +8,8 @@ import {
   KeyObject,
   createPublicKey,
   createPrivateKey,
+  sign,
+  verify,
 } from 'crypto';
 
 /**
@@ -45,9 +47,11 @@ export class CryptoManager {
   private readonly signingPublicKey: KeyObject;
   private readonly signingPrivateKey: KeyObject;
 
-  private constructor(encryptionKey: string, publicKeyPem: string, privateKeyPem: string) {
-    // Derive a 32-byte key for AES-256
-    this.aesKey = scryptSync(encryptionKey, 'salt', 32);
+  private constructor(encryptionKey: string, salt: string, publicKeyPem: string, privateKeyPem: string) {
+    // Derive a 32-byte key for AES-256 using a deployment-specific, non-static salt.
+    // The salt MUST be provided via CRYPTO_SALT env var — a hardcoded literal defeats the
+    // purpose of salting and enables precomputed rainbow-table attacks.
+    this.aesKey = scryptSync(encryptionKey, salt, 32);
     this.signingPublicKey = createPublicKey({
       key: publicKeyPem,
       format: 'pem',
@@ -60,21 +64,34 @@ export class CryptoManager {
     });
   }
 
-  public static initialize(encryptionKey: string, publicKeyPem: string, privateKeyPem: string): void {
+  /**
+   * Initializes the CryptoManager singleton.
+   * 
+   * @param encryptionKey  Raw encryption key material (from env var).
+   * @param salt           Deployment-specific salt string (from CRYPTO_SALT env var).
+   *                       Must be at least 16 bytes when hex-decoded or treated as a string.
+   *                       MUST NOT be a hardcoded literal.
+   * @param publicKeyPem   PEM-encoded Ed25519 public key.
+   * @param privateKeyPem  PEM-encoded Ed25519 private key.
+   */
+  public static initialize(encryptionKey: string, salt: string, publicKeyPem: string, privateKeyPem: string): void {
     if (!CryptoManager.instance) {
-      CryptoManager.instance = new CryptoManager(encryptionKey, publicKeyPem, privateKeyPem);
+      if (!salt || salt.length < 8) {
+        throw new ProcessingError('CRYPTO_SALT must be at least 8 characters. A static or empty salt defeats key derivation security.');
+      }
+      CryptoManager.instance = new CryptoManager(encryptionKey, salt, publicKeyPem, privateKeyPem);
     }
   }
 
   public static getInstance(): CryptoManager {
     if (!CryptoManager.instance) {
-      throw new Error('CryptoManager not initialized');
+      throw new Error('CryptoManager not initialized. Call initialize() first.');
     }
     return CryptoManager.instance;
   }
 
   /**
-   * Encrypts plaintext using AES-256-GCM.
+   * Encrypts plaintext using AES-256-GCM with a random IV per call.
    */
   public async encryptPayload(plaintext: string): Promise<EncryptedPayload> {
     const iv = randomBytes(12);
@@ -114,25 +131,16 @@ export class CryptoManager {
     }
   }
 
-  /**
-   * Signs a serialized JSON string using Ed25519.
-   */
   public async signEvent(data: string): Promise<string> {
-    const signer = createSign('sha256');
-    signer.update(data);
-    signer.end();
-    return signer.sign(this.signingPrivateKey, 'hex');
+    // For Ed25519, we use the direct sign function.
+    // The algorithm is set to null because Ed25519 handles hashing internally.
+    const signature = sign(null, Buffer.from(data), this.signingPrivateKey);
+    return signature.toString('hex');
   }
 
-  /**
-   * Verifies an Ed25519 signature.
-   */
   public async verifyEvent(data: string, signature: string): Promise<boolean> {
     try {
-      const verifier = createVerify('sha256');
-      verifier.update(data);
-      verifier.end();
-      return verifier.verify(this.signingPublicKey, signature, 'hex');
+      return verify(null, Buffer.from(data), this.signingPublicKey, Buffer.from(signature, 'hex'));
     } catch (err) {
       return false;
     }

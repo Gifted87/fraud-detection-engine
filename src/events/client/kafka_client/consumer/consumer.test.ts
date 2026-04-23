@@ -4,6 +4,7 @@ import { MetricsManager } from '../telemetry/metrics';
 import { ProjectionStore } from '../../../../store/projection_store/projection-store';
 import { EventEnvelopeFactory } from '../../../../core/domain_models/messaging/event-envelope.schema';
 import { Kafka } from 'kafkajs';
+import { EventRepository } from '../../../../store/event_store/postgres_impl/repository';
 
 jest.mock('kafkajs');
 
@@ -11,6 +12,10 @@ describe('FraudEventConsumer', () => {
   let mockConsumer: any;
   let mockProducer: any;
   let mockKafka: any;
+  let mockEventRepository: any;
+  let mockProjectionStore: any;
+  let mockLogger: any;
+  let mockConfig: any;
 
   beforeAll(() => {
     (KafkaConfigProvider as any).instance = {
@@ -21,8 +26,27 @@ describe('FraudEventConsumer', () => {
       recordConsumerLatency: jest.fn(),
       recordDlqIngress: jest.fn()
     };
-    (ProjectionStore as any).instance = {
-      processTransaction: jest.fn().mockResolvedValue(100n)
+    mockProjectionStore = {
+      processTransaction: jest.fn().mockResolvedValue(100n),
+      getRedisClient: jest.fn().mockReturnValue({
+        incr: jest.fn().mockResolvedValue(1)
+      })
+    };
+
+    mockEventRepository = {
+      append: jest.fn().mockResolvedValue(undefined)
+    };
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      fatal: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn()
+    };
+    mockConfig = {
+      NODE_ENV: 'test',
+      MAX_CONSUMER_RETRIES: 3,
+      VELOCITY_WINDOW_SECONDS: 60
     };
   });
 
@@ -35,7 +59,9 @@ describe('FraudEventConsumer', () => {
       on: jest.fn()
     };
     mockProducer = {
-      send: jest.fn()
+      connect: jest.fn(),
+      send: jest.fn(),
+      disconnect: jest.fn()
     };
     mockKafka = {
       consumer: jest.fn().mockReturnValue(mockConsumer),
@@ -49,7 +75,12 @@ describe('FraudEventConsumer', () => {
   });
 
   it('should initialize and connect', async () => {
-    const consumer = new FraudEventConsumer('test-topic');
+    const consumer = new FraudEventConsumer('test-topic', 'dlq', undefined, { 
+      eventRepository: mockEventRepository,
+      projectionStore: mockProjectionStore,
+      logger: mockLogger,
+      config: mockConfig
+    });
     mockConsumer.run.mockResolvedValueOnce(undefined);
     
     await consumer.start();
@@ -59,14 +90,24 @@ describe('FraudEventConsumer', () => {
   });
 
   it('should disconnect on shutdown', async () => {
-    const consumer = new FraudEventConsumer('test-topic');
+    const consumer = new FraudEventConsumer('test-topic', 'dlq', undefined, { 
+      eventRepository: mockEventRepository,
+      projectionStore: mockProjectionStore,
+      logger: mockLogger,
+      config: mockConfig
+    });
     await consumer.shutdown();
     expect(mockConsumer.disconnect).toHaveBeenCalled();
   });
 
   it('should process a valid message batch and call processor', async () => {
     const processor = jest.fn().mockResolvedValue(undefined);
-    const consumer = new FraudEventConsumer('test-topic', 'dlq', processor);
+    const consumer = new FraudEventConsumer('test-topic', 'dlq', processor, { 
+      eventRepository: mockEventRepository,
+      projectionStore: mockProjectionStore,
+      logger: mockLogger,
+      config: mockConfig
+    });
     
     let eachBatchCb: any;
     mockConsumer.run.mockImplementation(async ({ eachBatch }: any) => {
@@ -79,7 +120,11 @@ describe('FraudEventConsumer', () => {
     jest.spyOn(EventEnvelopeFactory, 'verifyEnvelope').mockResolvedValue(true);
 
     const validEnvelope = {
-      metadata: { schemaVersion: 'v1.0' },
+      metadata: { 
+        schemaVersion: 'v1.0',
+        createdAtNs: 123456789n,
+        provenanceTrace: 'test-trace'
+      },
       payload: {
         type: 'TransactionInitiated',
         userId: 'u1',
@@ -110,13 +155,18 @@ describe('FraudEventConsumer', () => {
     await eachBatchCb(payload);
 
     // Should call projectionStore processing and the custom processor
-    expect(ProjectionStore.getInstance().processTransaction).toHaveBeenCalledWith('u1', 50n, 'tx1', 60);
+    expect(mockProjectionStore.processTransaction).toHaveBeenCalledWith('u1', 50n, 'tx1', 60);
     expect(processor).toHaveBeenCalled();
     expect(payload.resolveOffset).toHaveBeenCalled();
   });
 
   it('should route invalid messages to DLQ', async () => {
-    const consumer = new FraudEventConsumer('test-topic');
+    const consumer = new FraudEventConsumer('test-topic', 'dlq', undefined, { 
+      eventRepository: mockEventRepository,
+      projectionStore: mockProjectionStore,
+      logger: mockLogger,
+      config: mockConfig
+    });
     
     let eachBatchCb: any;
     mockConsumer.run.mockImplementation(async ({ eachBatch }: any) => {

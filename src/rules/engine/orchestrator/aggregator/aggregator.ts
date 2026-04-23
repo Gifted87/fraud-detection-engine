@@ -10,6 +10,14 @@ import {
   RiskAggregator,
 } from '../contracts/engine-contracts';
 import { MetricsCollector } from '../../../../utils/metrics/metrics-collector';
+import { Logger } from 'pino';
+import { SystemConfiguration } from '../../../../core/domain_models/dependency_config';
+
+interface Dependencies {
+  metricsCollector: MetricsCollector;
+  config: SystemConfiguration;
+  logger: Logger;
+}
 
 /**
  * Concrete implementation of the RiskAggregator.
@@ -18,15 +26,15 @@ import { MetricsCollector } from '../../../../utils/metrics/metrics-collector';
 export class WeightedRiskAggregator implements RiskAggregator {
   private readonly weights: Record<string, number>;
   private readonly metrics: MetricsCollector;
+  private readonly logger: Logger;
+  private readonly environment: 'production' | 'development' | 'test';
   private readonly defaultWeight: number = 1.0;
 
-  /**
-   * @param weights Map of rule IDs to their significance weights.
-   * @param metrics Observability collector instance.
-   */
-  constructor(weights: Record<string, number>, metrics: MetricsCollector) {
-    this.weights = { ...weights };
-    this.metrics = metrics;
+  constructor({ metricsCollector, config, logger }: Dependencies) {
+    this.weights = config.RULE_WEIGHTS;
+    this.metrics = metricsCollector;
+    this.logger = logger;
+    this.environment = config.NODE_ENV;
   }
 
   /**
@@ -40,7 +48,7 @@ export class WeightedRiskAggregator implements RiskAggregator {
   public aggregate(results: ReadonlyArray<RuleResult>): RiskScore {
     const startNs = process.hrtime.bigint();
     const metricLabels = {
-      environment: (process.env.NODE_ENV as 'development' | 'production' | 'test') || 'production',
+      environment: this.environment,
       component: 'risk_aggregator',
       stream_name: 'risk_assessment',
     };
@@ -70,14 +78,10 @@ export class WeightedRiskAggregator implements RiskAggregator {
       
       return finalScore;
     } catch (error) {
-      // Structured logging for diagnostic traceability
-      console.error(JSON.stringify({
-        level: 'critical',
-        message: 'Risk aggregation failed, defaulting to safe score',
+      this.logger.error({
         results_snapshot: results,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: Date.now(),
-      }));
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'Risk aggregation failed, defaulting to safe score');
 
       // Report failure to metrics
       this.metrics.incrementThroughput(metricLabels, 'aggregation_failure');

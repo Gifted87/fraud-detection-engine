@@ -4,7 +4,12 @@ import { KafkaEventProducer } from './producer/producer';
 import { FraudEventConsumer } from './consumer/consumer';
 import { MetricsManager } from './telemetry/metrics';
 import { Transaction } from '../../../core/domain_models/definitions/transaction.interface';
-import { DependencyContainer } from '../../../core/domain_models/dependency_config';
+import { Logger } from 'pino';
+
+interface Dependencies {
+  registry: Registry;
+  logger: Logger;
+}
 
 /**
  * KafkaMessagingClient
@@ -13,18 +18,18 @@ import { DependencyContainer } from '../../../core/domain_models/dependency_conf
  * Orchestrates producers, consumers, and lifecycle management.
  */
 export class KafkaMessagingClient {
-  private static instance: KafkaMessagingClient;
-  
   private readonly configProvider: KafkaConfigProvider;
   private readonly metrics: MetricsManager;
   private readonly producer: KafkaEventProducer;
   private readonly consumers: FraudEventConsumer[] = [];
   
   private readonly statusGauge: Gauge<string>;
+  private readonly logger: Logger;
   private isRunning: boolean = false;
 
-  private constructor(registry: Registry) {
+  constructor({ registry, logger }: Dependencies) {
     const env = process.env;
+    this.logger = logger;
     this.metrics = MetricsManager.initialize(registry);
     this.configProvider = KafkaConfigProvider.initialize(env, registry);
     this.producer = KafkaEventProducer.initialize(this.configProvider, this.metrics);
@@ -37,13 +42,6 @@ export class KafkaMessagingClient {
     });
   }
 
-  public static getInstance(registry: Registry): KafkaMessagingClient {
-    if (!KafkaMessagingClient.instance) {
-      KafkaMessagingClient.instance = new KafkaMessagingClient(registry);
-    }
-    return KafkaMessagingClient.instance;
-  }
-
   /**
    * Bootstraps the messaging subsystem.
    */
@@ -51,16 +49,12 @@ export class KafkaMessagingClient {
     if (this.isRunning) return;
 
     try {
-      try {
-        await this.producer.connect();
-        this.statusGauge.labels('producer').set(1);
-        
-        for (const consumer of this.consumers) {
-          await consumer.start();
-          this.statusGauge.labels(`consumer`).set(1);
-        }
-      } catch(conn_err) {
-        console.warn("Bypassing kafka connection failure for local testing", conn_err);
+      await this.producer.connect();
+      this.statusGauge.labels('producer').set(1);
+      
+      for (const consumer of this.consumers) {
+        await consumer.start();
+        this.statusGauge.labels(`consumer`).set(1);
       }
 
       this.isRunning = true;
@@ -106,7 +100,7 @@ export class KafkaMessagingClient {
       this.statusGauge.labels('consumer').set(0);
       this.isRunning = false;
     } catch (error) {
-      console.error('Error during messaging client shutdown:', error);
+      this.logger.error({ error }, 'Error during messaging client shutdown');
     }
   }
 }

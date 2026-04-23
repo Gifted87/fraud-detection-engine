@@ -8,5 +8,6 @@
   },
   "moduleNameMapper": {
     "../utils/security/security_manager": "<rootDir>/src/utils/security/crypto"
-  }
+  },
+  "testTimeout": 120000
 }

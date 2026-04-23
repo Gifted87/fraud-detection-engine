@@ -6,6 +6,7 @@ import { Transaction } from '../../../../../core/domain_models/definitions/trans
 describe('VelocityRule', () => {
   let projectionStore: jest.Mocked<ProjectionStore>;
   let rule: VelocityRule;
+  let mockLogger: any;
 
   beforeEach(() => {
     projectionStore = {
@@ -13,8 +14,24 @@ describe('VelocityRule', () => {
     } as any;
     
     const registry = new Registry();
-    process.env.VELOCITY_THRESHOLD = '10';
-    rule = new VelocityRule(projectionStore, registry);
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      fatal: jest.fn(),
+      debug: jest.fn()
+    };
+
+    rule = new VelocityRule({
+      projectionStore: projectionStore as any,
+      registry,
+      logger: mockLogger,
+      config: {
+        NODE_ENV: 'test',
+        VELOCITY_THRESHOLD: 10,
+        VELOCITY_WINDOW_SECONDS: 60
+      } as any
+    });
   });
 
   afterEach(() => {

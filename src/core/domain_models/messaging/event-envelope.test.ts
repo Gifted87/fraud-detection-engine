@@ -1,12 +1,16 @@
 import { EventEnvelopeFactory, SecurityViolationError, MessageEnvelope } from './event-envelope.schema';
-import { CryptoValidator } from '../security/crypto-validator.service';
+import { CryptoManager } from '../../../utils/security/crypto';
 import { Transaction } from '../definitions/transaction.interface';
 
 describe('EventEnvelopeFactory', () => {
   beforeAll(() => {
-    // Reset and Initialize CryptoValidator for EventEnvelopeFactory
-    (CryptoValidator as any).instance = null;
-    CryptoValidator.initialize('test-signing-key');
+    (CryptoManager as any).instance = null;
+    CryptoManager.initialize(
+      'test-enc-key',
+      'test-salt-long-enough',
+      '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA1PSK//wZg2vQhgUBDn2HvG0Y8IVau0iGjFBw4TBvGSc=\n-----END PUBLIC KEY-----',
+      '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIC8Wb4tn/NTE4alDqkPL/Hgd7V9fE4rUCN3JqC4wHMn9\n-----END PRIVATE KEY-----'
+    );
   });
 
   it('should create and sign a message envelope successfully', async () => {
@@ -28,7 +32,6 @@ describe('EventEnvelopeFactory', () => {
     expect(envelope.metadata.schemaVersion).toBe('v1.0');
     expect(envelope.payload).toEqual(mockTransaction);
     
-    // Verify payload is wrapped frozen (note Object.isFrozen checks shallow freeze)
     expect(Object.isFrozen(envelope)).toBe(true);
   });
 
@@ -61,7 +64,6 @@ describe('EventEnvelopeFactory', () => {
 
     const envelope = await EventEnvelopeFactory.create(mockTransaction);
     
-    // Clone and tamper (bypass freeze)
     const tamperedEnvelope: MessageEnvelope<any> = {
       ...envelope,
       payload: { ...envelope.payload, amount: { value: 9999n, currency: 'USD' } }

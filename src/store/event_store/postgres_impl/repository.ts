@@ -1,14 +1,30 @@
 import { PoolClient } from 'pg';
 import { Registry, Histogram } from 'prom-client';
 import { PostgresPoolManager } from './client';
-import { CryptoValidator } from '../../../core/domain_models/security/crypto-validator.service';
-import { MessageEnvelope } from '../../../core/domain_models/messaging/event-envelope.schema';
+import { CryptoManager } from '../../../utils/security/crypto';
+import { MessageEnvelope, canonicalizeJson } from '../../../core/domain_models/messaging/event-envelope.schema';
 import { Transaction } from '../../../core/domain_models/definitions/transaction.interface';
+import { Logger } from 'pino';
+import { SystemConfiguration } from '../../../core/domain_models/dependency_config';
+
+interface Dependencies {
+  registry: Registry;
+  logger: Logger;
+  config: SystemConfiguration;
+}
 import {
   OptimisticConcurrencyError,
   IntegrityViolationError,
   ConnectionError,
+  EventStoreError,
 } from './errors';
+
+/** Postgres error code for serialization failures under SERIALIZABLE isolation. */
+const PG_SERIALIZATION_FAILURE = '40001';
+const PG_UNIQUE_VIOLATION = '23505';
+
+/** Default number of retries for serialization failures before propagating the error. */
+const DEFAULT_RETRIES = 3;
 
 /**
  * EventRepository implementation for PostgreSQL-backed append-only event store.
@@ -16,15 +32,17 @@ import {
  */
 export class EventRepository<T extends Transaction> {
   private readonly poolManager: PostgresPoolManager;
-  private readonly cryptoValidator: CryptoValidator;
+  private readonly cryptoManager: CryptoManager;
+  private readonly logger: Logger;
   
   // Performance metrics
   private readonly sqlExecutionDuration: Histogram<string>;
   private readonly cryptoVerificationDuration: Histogram<string>;
 
-  constructor(registry: Registry) {
-    this.poolManager = PostgresPoolManager.getInstance();
-    this.cryptoValidator = CryptoValidator.getInstance();
+  constructor({ registry, logger, config }: Dependencies) {
+    this.poolManager = PostgresPoolManager.getInstance(config);
+    this.cryptoManager = CryptoManager.getInstance();
+    this.logger = logger;
 
     this.sqlExecutionDuration = new Histogram({
       name: 'event_store_sql_execution_seconds',
@@ -37,51 +55,58 @@ export class EventRepository<T extends Transaction> {
       name: 'event_store_crypto_verification_seconds',
       help: 'Duration of cryptographic verification in seconds',
       registers: [registry],
+      labelNames: ['operation'],
     });
   }
 
   /**
-   * Appends a new event to the stream for a given aggregate.
-   * Enforces optimistic concurrency and transactional integrity.
+   * Appends a new event to the aggregate stream.
+   * Versioning is handled atomically at the database layer to ensure topological
+   * consistency without depending on volatile external counters (Redis).
+   * 
+   * @param aggregateId Unique identifier for the aggregate stream.
+   * @param event       The signed event envelope to persist.
+   * @throws OptimisticConcurrencyError if a version conflict occurs.
    */
-  public async append(aggregateId: string, event: MessageEnvelope<T>, version: bigint): Promise<void> {
-    const client = await this.acquireClient();
+  public async append(
+    aggregateId: string,
+    event: MessageEnvelope<T>
+  ): Promise<void> {
     const start = process.hrtime.bigint();
+    
+    await this.executeWithRetry(async (client) => {
+      try {
+        await client.query('BEGIN');
 
-    try {
-      await client.query('BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        // Insert event using subquery to calculate next version atomically.
+        // The UNIQUE constraint on (aggregate_id, version) ensures that if two
+        // concurrent writers both calculate version X, only one succeeds.
+        await client.query(
+          `INSERT INTO events (aggregate_id, version, event_type, metadata, payload, signature, created_at)
+           VALUES ($1, (SELECT COALESCE(MAX(version), 0) + 1 FROM events WHERE aggregate_id = $1), $2, $3, $4, $5, NOW())`,
+          [
+            aggregateId,
+            event.payload.type,
+            canonicalizeJson(event.metadata),
+            canonicalizeJson(event.payload),
+            event.signature,
+          ]
+        );
 
-      // Check current version for optimistic concurrency
-      const { rows } = await client.query(
-        'SELECT version FROM events WHERE aggregate_id = $1 ORDER BY version DESC LIMIT 1 FOR UPDATE',
-        [aggregateId]
-      );
-
-      const currentVersion = rows.length > 0 ? BigInt(rows[0].version) : 0n;
-      if (version !== currentVersion + 1n) {
-        throw new OptimisticConcurrencyError(aggregateId, version, currentVersion + 1n);
+        await client.query('COMMIT');
+      } catch (err: any) {
+        await client.query('ROLLBACK');
+        
+        // Map PostgreSQL unique_violation to OptimisticConcurrencyError.
+        if (err.code === PG_UNIQUE_VIOLATION) {
+          throw new OptimisticConcurrencyError(aggregateId, -1n);
+        }
+        
+        throw err;
       }
+    }, DEFAULT_RETRIES);
 
-      await client.query(
-        `INSERT INTO events (aggregate_id, version, event_type, payload, signature, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [
-          aggregateId,
-          version.toString(),
-          event.payload.type,
-          JSON.stringify(event.payload),
-          event.signature,
-        ]
-      );
-
-      await client.query('COMMIT');
-      this.recordDuration(this.sqlExecutionDuration, 'append', start);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    this.recordDuration(this.sqlExecutionDuration, 'append', start);
   }
 
   /**
@@ -101,22 +126,24 @@ export class EventRepository<T extends Transaction> {
       const envelopes: MessageEnvelope<T>[] = [];
 
       for (const row of rows) {
+        const metadata = row.metadata;
+        if (metadata && typeof metadata.createdAtNs === 'string') {
+          (metadata as any).createdAtNs = BigInt(metadata.createdAtNs);
+        }
+
         const envelope: MessageEnvelope<T> = {
-          metadata: {
-            schemaVersion: 'v1.0',
-            createdAtNs: BigInt(new Date(row.created_at).getTime() * 1_000_000),
-            provenanceTrace: 'db_load',
-          },
+          metadata: metadata,
           payload: row.payload as T,
           signature: row.signature,
         };
 
-        // Cryptographic verification
         const cryptoStart = process.hrtime.bigint();
-        const dataToVerify = JSON.stringify({ metadata: envelope.metadata, payload: envelope.payload }, (key, value) => 
-          typeof value === 'bigint' ? value.toString() : value
-        );
-        const isValid = await this.cryptoValidator.verify(dataToVerify, envelope.signature);
+        const dataToVerify = canonicalizeJson({
+          metadata: envelope.metadata,
+          payload: envelope.payload
+        });
+        
+        const isValid = await this.cryptoManager.verifyEvent(dataToVerify, envelope.signature);
         this.recordDuration(this.cryptoVerificationDuration, 'verify', cryptoStart);
 
         if (!isValid) {
@@ -133,15 +160,44 @@ export class EventRepository<T extends Transaction> {
     }
   }
 
+  /**
+   * Executes a database operation with automatic retry on transient failures.
+   */
+  private async executeWithRetry(
+    operation: (client: PoolClient) => Promise<void>,
+    maxRetries: number
+  ): Promise<void> {
+    let attempt = 0;
+
+    while (true) {
+      const client = await this.acquireClient();
+      try {
+        await operation(client);
+        return;
+      } catch (err: any) {
+        const isRetryable = err?.code === PG_SERIALIZATION_FAILURE;
+
+        if (isRetryable && attempt < maxRetries) {
+          attempt++;
+          const delayMs = 50 * Math.pow(2, attempt) + Math.floor(Math.random() * 50);
+          this.logger.warn({ code: err.code, attempt }, 'Transient DB error, retrying...');
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+  }
+
   private async acquireClient(): Promise<PoolClient> {
     try {
       return await this.poolManager.getPool().connect();
     } catch (err) {
       const stats = this.poolManager.getStats();
-      throw new ConnectionError(
-        err instanceof Error ? err.message : 'Unknown connection error',
-        { ...stats }
-      );
+      throw new ConnectionError(err instanceof Error ? err.message : String(err), { ...stats });
     }
   }
 

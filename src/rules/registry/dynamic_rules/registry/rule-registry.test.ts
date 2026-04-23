@@ -1,17 +1,29 @@
 import { Registry } from 'prom-client';
 import { RuleRegistry } from './rule-registry';
-import { FraudRule, RuleEvaluationResult } from '../contracts/fraud-rule-contract';
+import { FraudRule } from '../contracts/fraud-rule-contract';
 import { Transaction } from '../../../../core/domain_models/definitions/transaction.interface';
 
 describe('RuleRegistry', () => {
   let ruleRegistry: RuleRegistry;
   let registry: Registry;
+  let mockLogger: any;
 
   beforeEach(() => {
     registry = new Registry();
-    process.env.FRAUD_THRESHOLD = '0.5';
-    ruleRegistry = RuleRegistry.initialize(registry);
-    (ruleRegistry as any).rules = new Map(); // Clear rules
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      fatal: jest.fn(),
+      debug: jest.fn()
+    };
+    ruleRegistry = new RuleRegistry({
+      registry,
+      logger: mockLogger,
+      config: { 
+        FRAUD_THRESHOLD: 0.5,
+        NODE_ENV: 'test'
+      } as any
+    });
   });
 
   afterEach(() => {

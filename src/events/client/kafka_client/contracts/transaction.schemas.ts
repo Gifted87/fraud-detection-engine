@@ -10,7 +10,7 @@ const BrandedString = (brand: string) =>
  * Zod schema for MonetaryAmount.
  */
 export const MonetaryAmountSchema = z.object({
-  value: z.bigint(),
+  value: z.coerce.bigint(),
   currency: z.string().length(3, 'Currency must be a 3-letter ISO code'),
 });
 
@@ -33,7 +33,7 @@ const TransactionEventBaseSchema = z.object({
   userId: BrandedString('UserId'),
   merchantId: BrandedString('MerchantId'),
   amount: MonetaryAmountSchema,
-  timestamp: z.bigint(),
+  timestamp: z.coerce.bigint(),
   telemetry: TelemetrySchema,
 });
 
@@ -75,7 +75,7 @@ export const TransactionSchema = z.discriminatedUnion('type', [
  */
 export const EnvelopeMetadataSchema = z.object({
   schemaVersion: z.string().min(1),
-  createdAtNs: z.bigint(),
+  createdAtNs: z.coerce.bigint(),
   provenanceTrace: z.string().min(1),
 });
 

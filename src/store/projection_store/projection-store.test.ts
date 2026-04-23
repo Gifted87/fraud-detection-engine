@@ -32,6 +32,18 @@ describe('ProjectionStore', () => {
     expect(redisMock.eval).toHaveBeenCalled();
   });
 
+  it('should be idempotent when processing same transactionId', async () => {
+    redisMock.eval.mockResolvedValueOnce('100');
+    const result1 = await store.processTransaction('user-1', 100n, 'tx-16', 60);
+    
+    redisMock.eval.mockResolvedValueOnce('100');
+    const result2 = await store.processTransaction('user-1', 100n, 'tx-16', 60);
+
+    expect(result1).toBe(100n);
+    expect(result2).toBe(100n);
+    expect(redisMock.eval).toHaveBeenCalledTimes(2);
+  });
+
   it('should throw ProjectionStoreError on eval failure', async () => {
     redisMock.eval.mockRejectedValueOnce(new Error('redis error'));
     

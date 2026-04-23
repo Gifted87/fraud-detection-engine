@@ -4,12 +4,26 @@ import { Transaction } from '../../../../../core/domain_models/definitions/trans
 
 describe('MerchantBlacklistRule', () => {
   let rule: MerchantBlacklistRule;
+  let mockLogger: any;
   const BLACKLIST_ID = 'prohibited-merchant-1';
 
   beforeEach(() => {
     const registry = new Registry();
-    process.env.MERCHANT_BLACKLIST = BLACKLIST_ID;
-    rule = new MerchantBlacklistRule(registry);
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      fatal: jest.fn(),
+      debug: jest.fn()
+    };
+    rule = new MerchantBlacklistRule({
+      registry,
+      logger: mockLogger,
+      config: {
+        NODE_ENV: 'test',
+        MERCHANT_BLACKLIST: BLACKLIST_ID
+      } as any
+    });
   });
 
   afterEach(() => {
@@ -54,8 +68,14 @@ describe('MerchantBlacklistRule', () => {
 
   it('should handle multiple blacklisted merchants correctly', async () => {
     const registry = new Registry();
-    process.env.MERCHANT_BLACKLIST = 'm1, m2, m3';
-    const multiRule = new MerchantBlacklistRule(registry);
+    const multiRule = new MerchantBlacklistRule({
+      registry,
+      logger: mockLogger,
+      config: {
+        NODE_ENV: 'test',
+        MERCHANT_BLACKLIST: 'm1, m2, m3'
+      } as any
+    });
 
     const tx1: Transaction = { merchantId: 'm1' } as any;
     const tx2: Transaction = { merchantId: 'm2' } as any;

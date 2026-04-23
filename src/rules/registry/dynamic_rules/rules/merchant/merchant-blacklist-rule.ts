@@ -1,93 +1,98 @@
-import { Histogram, Registry } from 'prom-client';
+import { Counter, Registry } from 'prom-client';
 import { FraudRule, RuleEvaluationResult } from '../../contracts/fraud-rule-contract';
 import { Transaction } from '../../../../../core/domain_models/definitions/transaction.interface';
+import { Logger } from 'pino';
+import { SystemConfiguration } from '../../../../../core/domain_models/dependency_config';
+
+interface Dependencies {
+  registry: Registry;
+  logger: Logger;
+  config: SystemConfiguration;
+}
 
 /**
  * MerchantBlacklistRule
- * 
- * Flags transactions associated with merchants on a prohibited list.
- * This list can be dynamically configured via environment variables.
+ *
+ * Implements a "fail-closed" security policy for high-risk or sanctioned merchants.
+ * If a merchant ID appears in the prohibited list, the transaction is immediately
+ * flagged with maximum risk (1.0).
+ *
+ * This rule is treated as CRITICAL by the RuleRegistry. If the engine fails to 
+ * evaluate this rule (e.g. configuration corruption), the orchestrator will 
+ * trigger a fail-closed response, flagging the transaction by default.
  */
 export class MerchantBlacklistRule implements FraudRule {
   public readonly ruleId: string = 'merchant-blacklist-rule-v1';
-  public readonly description: string = 'Flags transactions from merchants on a prohibited blacklist.';
+  public readonly description: string = 'Immediately flags transactions at prohibited or sanctioned merchants.';
 
-  private readonly blacklist: Set<string>;
-  private readonly metrics: Histogram<string>;
+  private blacklist: Set<string>;
+  private readonly metrics: Counter<string>;
+  private readonly logger: Logger;
+  private readonly registry: Registry;
+  private readonly environment: 'development' | 'production' | 'test';
 
-  constructor(
-    private readonly registry: Registry
-  ) {
-    // Load blacklisted merchant IDs from environment (comma-separated string)
-    const blacklistRaw = process.env.MERCHANT_BLACKLIST || '';
-    this.blacklist = new Set(blacklistRaw.split(',').map(id => id.trim()).filter(id => id.length > 0));
-
-    this.metrics = new Histogram({
-      name: 'fraud_engine_rule_merchant_blacklist_latency_seconds',
-      help: 'Latency of merchant blacklist rule evaluation',
+  constructor({ registry, logger, config }: Dependencies) {
+    this.registry = registry;
+    this.logger = logger;
+    this.environment = config.NODE_ENV;
+    this.blacklist = new Set();
+    
+    this.metrics = new Counter({
+      name: 'fraud_engine_rule_merchant_blacklist_hits_total',
+      help: 'Total number of transactions hitting the merchant blacklist',
+      labelNames: ['ruleId', 'merchantId', 'environment'],
       registers: [this.registry],
-      labelNames: ['ruleId', 'environment'],
-      buckets: [0.001, 0.002, 0.005, 0.01, 0.025, 0.05],
     });
+
+    this.reloadConfig(config);
   }
 
   /**
-   * Evaluates if a transaction involves a blacklisted merchant.
+   * Reloads the prohibited merchant list from the centralized configuration.
+   */
+  public reloadConfig(config: SystemConfiguration): void {
+    const blacklistRaw = config.MERCHANT_BLACKLIST;
+    const newBlacklist = new Set(
+      blacklistRaw
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    );
+
+    if (newBlacklist.size !== this.blacklist.size || [...newBlacklist].some(id => !this.blacklist.has(id))) {
+      this.logger.info({ 
+        ruleId: this.ruleId, 
+        merchantCount: newBlacklist.size 
+      }, 'MerchantBlacklist reloaded');
+      this.blacklist = newBlacklist;
+    }
+  }
+
+  /**
+   * Checks if the transaction merchant is in the blacklist.
    */
   public async evaluate(transaction: Transaction): Promise<RuleEvaluationResult> {
-    const start = process.hrtime.bigint();
-    const environment = process.env.NODE_ENV || 'production';
+    const isSuspicious = this.blacklist.has(transaction.merchantId);
 
-    try {
-      // 1. Check if the merchant ID is in the blacklist
-      const isBlacklisted = this.blacklist.has(transaction.merchantId);
-
-      // 2. Evaluate against threshold
-      const result: RuleEvaluationResult = Object.freeze({
-        isSuspicious: isBlacklisted,
-        riskScore: isBlacklisted ? 1.0 : 0.0,
-        reason: isBlacklisted 
-          ? `Merchant ${transaction.merchantId} is on the prohibited blacklist.`
-          : 'Merchant is not blacklisted',
-        metadata: {
-          merchantId: transaction.merchantId,
-          blacklistSize: this.blacklist.size
-        }
-      });
-
-      // 3. Structured Logging
-      if (isBlacklisted) {
-        console.log(JSON.stringify({
-          ruleId: this.ruleId,
-          transactionId: transaction.transactionId,
-          merchantId: transaction.merchantId,
-          isSuspicious: result.isSuspicious,
-          timestamp: Date.now()
-        }));
-      }
-
-      return result;
-
-    } catch (error) {
-      // 4. Defensive fallback on error to prevent pipeline blockage
-      console.error(JSON.stringify({
-        level: 'critical',
-        message: 'MerchantBlacklistRule evaluation failed',
+    if (isSuspicious) {
+      this.metrics.labels(this.ruleId, transaction.merchantId, this.environment).inc();
+      this.logger.warn({
         ruleId: this.ruleId,
         transactionId: transaction.transactionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }));
-
-      return Object.freeze({
-        isSuspicious: false,
-        riskScore: 0.0,
-        reason: 'Rule execution error, defaulting to safe'
-      });
-    } finally {
-      // 5. Instrumentation
-      const end = process.hrtime.bigint();
-      const latency = Number(end - start) / 1e9;
-      this.metrics.labels(this.ruleId, environment).observe(latency);
+        merchantId: transaction.merchantId,
+        userId: transaction.userId
+      }, 'Merchant blacklist hit detected');
     }
+
+    return Object.freeze({
+      isSuspicious,
+      riskScore: isSuspicious ? 1.0 : 0.0, // Fail-closed: high risk score for blacklisted merchants
+      reason: isSuspicious
+        ? `Merchant ${transaction.merchantId} is on the prohibited blacklist.`
+        : 'Merchant is not blacklisted',
+      metadata: {
+        blacklistSize: this.blacklist.size
+      }
+    });
   }
 }

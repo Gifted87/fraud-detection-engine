@@ -1,5 +1,6 @@
 import { Pool, PoolConfig } from 'pg';
 import { z } from 'zod';
+import { SystemConfiguration } from '../../../core/domain_models/dependency_config';
 
 /**
  * Configuration schema for the PostgreSQL connection pool.
@@ -7,8 +8,8 @@ import { z } from 'zod';
  */
 const PostgresConfigSchema = z.object({
   DB_URL: z.string().url(),
-  DB_POOL_MIN: z.preprocess((val) => Number(val), z.number().int().positive()),
-  DB_POOL_MAX: z.preprocess((val) => Number(val), z.number().int().positive()),
+  DB_POOL_MIN: z.number().int().positive(),
+  DB_POOL_MAX: z.number().int().positive(),
 }).refine((data) => data.DB_POOL_MIN <= data.DB_POOL_MAX, {
   message: "DB_POOL_MIN cannot be greater than DB_POOL_MAX",
   path: ["DB_POOL_MIN"],
@@ -33,11 +34,11 @@ export class PostgresPoolManager {
   private pool: Pool;
   private initialized: boolean = false;
 
-  private constructor() {
+  private constructor(config: SystemConfiguration) {
     const rawConfig = {
-      DB_URL: process.env.DB_URL,
-      DB_POOL_MIN: process.env.DB_POOL_MIN,
-      DB_POOL_MAX: process.env.DB_POOL_MAX,
+      DB_URL: config.DB_URL,
+      DB_POOL_MIN: config.DB_POOL_MIN,
+      DB_POOL_MAX: config.DB_POOL_MAX,
     };
 
     const result = PostgresConfigSchema.safeParse(rawConfig);
@@ -46,11 +47,16 @@ export class PostgresPoolManager {
     }
 
     // Security constraint: Production environments MUST use SSL/TLS
-    if (process.env.NODE_ENV === 'production' && !process.env.DB_URL?.includes('sslmode=verify-full')) {
-      throw new Error('Insecure database connection detected: SSL/TLS with verify-full is mandatory in production.');
+    if (config.NODE_ENV === 'production' && !config.DB_URL.includes('sslmode=verify-full')) {
+      // In some environments (like local Docker), we might want to relax this, 
+      // but for production-ready engine, the audit insisted on rigor.
+      // I'll keep it but allow test/dev to bypass.
+      if (config.NODE_ENV === 'production') {
+        throw new Error('Insecure database connection detected: SSL/TLS with verify-full is mandatory in production.');
+      }
     }
 
-    const config: PoolConfig = {
+    const poolConfig: PoolConfig = {
       connectionString: result.data.DB_URL,
       min: result.data.DB_POOL_MIN,
       max: result.data.DB_POOL_MAX,
@@ -58,10 +64,10 @@ export class PostgresPoolManager {
       idleTimeoutMillis: 30000,
     };
 
-    this.pool = new Pool(config);
+    this.pool = new Pool(poolConfig);
 
     // Register error listener for robust operational monitoring
-    this.pool.on('error', (err, client) => {
+    this.pool.on('error', (err) => {
       console.error(JSON.stringify({
         level: 'error',
         message: 'Unexpected error on idle client',
@@ -94,10 +100,14 @@ export class PostgresPoolManager {
 
   /**
    * Returns the singleton instance of PostgresPoolManager.
+   * On first call, requires the system configuration.
    */
-  public static getInstance(): PostgresPoolManager {
+  public static getInstance(config?: SystemConfiguration): PostgresPoolManager {
     if (!PostgresPoolManager.instance) {
-      PostgresPoolManager.instance = new PostgresPoolManager();
+      if (!config) {
+        throw new Error('PostgresPoolManager must be initialized with configuration on first call');
+      }
+      PostgresPoolManager.instance = new PostgresPoolManager(config);
     }
     return PostgresPoolManager.instance;
   }
@@ -125,8 +135,8 @@ export class PostgresPoolManager {
    * Redacted configuration logging for security compliance.
    * Ensures credentials are not exposed in logs.
    */
-  public logConfiguration(): void {
-    const dbUrl = process.env.DB_URL || '';
+  public logConfiguration(config: SystemConfiguration): void {
+    const dbUrl = config.DB_URL || '';
     // Redact password part of the connection string
     const redactedUrl = dbUrl.replace(/:([^@]+)@/, ':****@');
     console.info(JSON.stringify({

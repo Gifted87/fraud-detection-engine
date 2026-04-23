@@ -1,8 +1,8 @@
 import { WeightedRiskAggregator } from './aggregator';
-import { MetricsCollector } from '../../../../utils/metrics/metrics-collector';
 
 describe('WeightedRiskAggregator', () => {
   let mockMetrics: any;
+  let mockLogger: any;
   let aggregator: WeightedRiskAggregator;
 
   beforeEach(() => {
@@ -10,7 +10,20 @@ describe('WeightedRiskAggregator', () => {
       incrementThroughput: jest.fn(),
       observeLatency: jest.fn()
     };
-    aggregator = new WeightedRiskAggregator({ rule1: 2.0, rule2: 1.0 }, mockMetrics as any);
+    mockLogger = {
+      info: jest.fn(),
+      error: jest.fn(),
+      fatal: jest.fn(),
+      debug: jest.fn()
+    };
+    aggregator = new WeightedRiskAggregator({
+      metricsCollector: mockMetrics as any,
+      config: {
+        RULE_WEIGHTS: { rule1: 2.0, rule2: 1.0 },
+        NODE_ENV: 'test'
+      } as any,
+      logger: mockLogger
+    });
   });
 
   it('should compute weighted aggregate correctly', () => {

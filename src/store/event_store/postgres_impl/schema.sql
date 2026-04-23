@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS events (
     aggregate_id UUID NOT NULL,
     version BIGINT NOT NULL,
     event_type VARCHAR(255) NOT NULL,
+    metadata JSONB NOT NULL,
     payload JSONB NOT NULL,
     signature TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

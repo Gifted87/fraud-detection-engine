@@ -15,7 +15,7 @@ describe('CryptoManager', () => {
     privateKeyPem = privateKey as string;
 
     (CryptoManager as any).instance = undefined;
-    CryptoManager.initialize(encryptionKey, publicKeyPem, privateKeyPem);
+    CryptoManager.initialize(encryptionKey, 'test-salt-longer-than-16-chars', publicKeyPem, privateKeyPem);
   });
 
   it('should encrypt and decrypt payloads successfully', async () => {

@@ -1,82 +1,100 @@
-import { Registry } from 'prom-client';
-import { DependencyContainer } from './core/domain_models/dependency_config';
-import { CryptoValidator } from './core/domain_models/security/crypto-validator.service';
-import { KafkaMessagingClient } from './events/client/kafka_client';
-import { RuleRegistry } from './rules/registry/dynamic_rules/registry/rule-registry';
-import { RuleEngine } from './rules/registry/dynamic_rules/orchestrator/rule-engine';
-import { VelocityRule } from './rules/registry/dynamic_rules/rules/velocity/velocity-rule';
-import { GeospatialRule } from './rules/registry/dynamic_rules/rules/geospatial/geospatial_rule';
-import { MerchantBlacklistRule } from './rules/registry/dynamic_rules/rules/merchant/merchant-blacklist-rule';
-import { ProjectionStore } from './store/projection_store/projection-store';
-import { MetricsCollector } from './utils/metrics/metrics-collector';
+import * as dotenv from 'dotenv';
+import fastify from 'fastify';
+import { createDependencyContainer } from './core/domain_models/dependency_config';
 import { FraudEventConsumer } from './events/client/kafka_client/consumer/consumer';
 import { isTransactionValidated } from './core/domain_models/definitions/transaction.interface';
-import Redis from 'ioredis';
+import { logger } from './utils/logging/logger';
 
-/**
- * Main entry point for the Fraud Detection Engine.
- * Orchestrates the initialization of all subsystems and starts the event processing pipeline.
- */
 async function bootstrap() {
-  console.log('Starting Fraud Detection Engine initialization...');
+  logger.info('Starting Fraud Detection Engine initialization...');
 
-  const registry = new Registry();
+  // 1. Initialize Dependency Injection Container
+  const container = await createDependencyContainer(process.env);
   
-  // 1. Initialize Dependency Container with environment variables
-  const container = DependencyContainer.initialize(process.env);
-  container.boot();
-  console.log('Dependency container initialized and booted.');
-  
-  const config = container.getConfig();
+  const { 
+    registry, 
+    orchestrator, 
+    kafkaClient, 
+    ruleRegistry, 
+    redis,
+    eventRepository,
+    config,
+    velocityRule,
+    geospatialRule,
+    merchantBlacklistRule
+  } = container.cradle;
 
-  // 2. Initialize Crypto Validator for HMAC signing
-  CryptoValidator.initialize(config.SIGNING_KEY);
-  console.log('Crypto validator initialized.');
+  // 2. Register Rules into the Registry
+  ruleRegistry.registerRule(velocityRule);
+  ruleRegistry.registerRule(geospatialRule);
+  ruleRegistry.registerRule(merchantBlacklistRule);
 
-  // 3. Initialize Metrics Collector
-  const metricsCollector = MetricsCollector.initialize(registry);
-  
-  // 4. Initialize Redis and Projection Store for real-time state management
-  const redis = new Redis(config.REDIS_URL);
-  const projectionStore = ProjectionStore.initialize(redis, registry);
-  console.log('Projection store initialized with Redis.');
-  
-  // 5. Initialize Rule Registry and register available fraud detection rules
-  const ruleRegistry = RuleRegistry.initialize(registry);
-  ruleRegistry.registerRule(new VelocityRule(projectionStore, registry));
-  ruleRegistry.registerRule(new GeospatialRule(redis, metricsCollector));
-  ruleRegistry.registerRule(new MerchantBlacklistRule(registry));
-  console.log('Rule registry initialized and rules registered.');
-  
-  // 6. Initialize Kafka Client facade
-  const kafkaClient = KafkaMessagingClient.getInstance(registry);
-  
-  // 7. Initialize Rule Engine (The central orchestrator)
-  const ruleEngine = new RuleEngine(registry, ruleRegistry, kafkaClient);
-  
-  // 8. Register Consumers
+  // 3. Define the processing pipeline
   const validatedTransactionProcessor = async (tx: any) => {
     if (isTransactionValidated(tx)) {
-      await ruleEngine.orchestrate(tx);
+      await orchestrator.orchestrate(tx);
     }
   };
 
   const ruleEngineConsumer = new FraudEventConsumer(
     'transactions-validated',
     'fraud-dlq',
-    validatedTransactionProcessor
+    validatedTransactionProcessor,
+    eventRepository
   );
   
   kafkaClient.registerConsumer(ruleEngineConsumer);
-  
-  // 9. Start Kafka Client (Connects producers and consumers)
+
+  // 4. Start Messaging Subsystem
   await kafkaClient.start();
+
+  // 5. Metrics Exposure Server (Fastify)
+  const server = fastify();
+  server.get('/metrics', async (request, reply) => {
+    reply.type('text/plain').send(await registry.metrics());
+  });
+
+  try {
+    await server.listen({ port: config.METRICS_PORT, host: '0.0.0.0' });
+    logger.info({ port: config.METRICS_PORT }, 'Metrics server listening');
+  } catch (err) {
+    logger.error({ err }, 'Failed to start metrics server');
+    process.exit(1);
+  }
+
+  // 6. Lifecycle Management (Hot-reload & Shutdown)
+  process.on('SIGHUP', () => {
+    logger.info({ pid: process.pid }, 'SIGHUP received — re-parsing .env and hot-reloading configurations');
+    try {
+      dotenv.config({ override: true });
+      ruleRegistry.reloadAll();
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Hot-reload failed');
+    }
+  });
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'Shutting down gracefully');
+    try {
+      await kafkaClient.shutdown();
+      await server.close();
+      redis.disconnect();
+    } catch (err) {
+      logger.error({ err }, 'Error during graceful shutdown');
+    }
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
   
-  console.log('Fraud Detection Engine started successfully and is listening for events.');
+  logger.info({ pid: process.pid }, 'Fraud Detection Engine started successfully.');
 }
 
-// Global error handler for the bootstrap process
 bootstrap().catch(err => {
-  console.error('CRITICAL: Failed to start Fraud Detection Engine:', err);
+  logger.fatal({ 
+    message: 'CRITICAL: Failed to start Fraud Detection Engine',
+    err: err instanceof Error ? err.message : String(err) 
+  });
   process.exit(1);
 });

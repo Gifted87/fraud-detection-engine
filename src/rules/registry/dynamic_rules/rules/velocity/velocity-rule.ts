@@ -2,28 +2,45 @@ import { Histogram, Registry } from 'prom-client';
 import { FraudRule, RuleEvaluationResult } from '../../contracts/fraud-rule-contract';
 import { Transaction } from '../../../../../core/domain_models/definitions/transaction.interface';
 import { ProjectionStore } from '../../../../../store/projection_store/projection-store';
+import { Logger } from 'pino';
+import { SystemConfiguration } from '../../../../../core/domain_models/dependency_config';
+
+interface Dependencies {
+  projectionStore: ProjectionStore;
+  registry: Registry;
+  logger: Logger;
+  config: SystemConfiguration;
+}
 
 /**
  * VelocityRule
  * 
  * Identifies high-frequency transaction patterns for a specific user within a defined sliding window.
  * If the transaction count exceeds the configured threshold, the rule marks the transaction as suspicious.
+ *
+ * Configuration is hot-reloadable at runtime via `reloadConfig()`.  This allows the operations team to
+ * update `VELOCITY_THRESHOLD` and `VELOCITY_WINDOW_SECONDS` environment variables and trigger a
+ * `SIGHUP` signal without restarting the process or dropping Kafka consumer connections.
  */
 export class VelocityRule implements FraudRule {
   public readonly ruleId: string = 'velocity-rule-v1';
   public readonly description: string = 'Detects high-frequency transactions exceeding threshold within a sliding window.';
 
-  private readonly threshold: number;
-  private readonly windowSizeSeconds: number;
+  private threshold: number;
+  private windowSizeSeconds: number;
   private readonly metrics: Histogram<string>;
+  private readonly logger: Logger;
+  private readonly registry: Registry;
+  private readonly projectionStore: ProjectionStore;
+  private readonly environment: 'development' | 'production' | 'test';
 
-  constructor(
-    private readonly projectionStore: ProjectionStore,
-    private readonly registry: Registry
-  ) {
-    // Dynamic configuration loaded from environment
-    this.threshold = parseInt(process.env.VELOCITY_THRESHOLD || '10', 10);
-    this.windowSizeSeconds = parseInt(process.env.VELOCITY_WINDOW_SECONDS || '60', 10);
+  constructor({ projectionStore, registry, logger, config }: Dependencies) {
+    this.projectionStore = projectionStore;
+    this.registry = registry;
+    this.logger = logger;
+    this.environment = config.NODE_ENV;
+    this.threshold = config.VELOCITY_THRESHOLD;
+    this.windowSizeSeconds = config.VELOCITY_WINDOW_SECONDS;
 
     this.metrics = new Histogram({
       name: 'fraud_engine_rule_velocity_latency_seconds',
@@ -35,17 +52,33 @@ export class VelocityRule implements FraudRule {
   }
 
   /**
+   * Reloads rule configuration from the centralized config object.
+   */
+  public reloadConfig(config: SystemConfiguration): void {
+    const newThreshold = config.VELOCITY_THRESHOLD;
+    const newWindow = config.VELOCITY_WINDOW_SECONDS;
+
+    if (newThreshold !== this.threshold || newWindow !== this.windowSizeSeconds) {
+      this.logger.info({ 
+        ruleId: this.ruleId, 
+        threshold: newThreshold, 
+        windowSizeSeconds: newWindow 
+      }, 'VelocityRule config reloaded');
+      this.threshold = newThreshold;
+      this.windowSizeSeconds = newWindow;
+    }
+  }
+
+  /**
    * Evaluates if a transaction is suspicious based on user velocity.
    */
   public async evaluate(transaction: Transaction): Promise<RuleEvaluationResult> {
     const start = process.hrtime.bigint();
-    const environment = process.env.NODE_ENV || 'production';
 
     try {
-      // 1. Fetch current transaction count for the user from ProjectionStore within the sliding window
+      // Fetch current transaction count for the user from ProjectionStore within the sliding window
       const count = await this.projectionStore.getTransactionCount(transaction.userId, this.windowSizeSeconds);
 
-      // 2. Evaluate against threshold
       const isSuspicious = count > this.threshold;
       
       const result: RuleEvaluationResult = Object.freeze({
@@ -61,38 +94,27 @@ export class VelocityRule implements FraudRule {
         }
       });
 
-      // 3. Structured Logging
-      console.log(JSON.stringify({
+      this.logger.info({
         ruleId: this.ruleId,
         transactionId: transaction.transactionId,
         userId: transaction.userId,
         calculatedCount: count,
         isSuspicious: result.isSuspicious,
-        timestamp: Date.now()
-      }));
+      }, 'VelocityRule evaluated');
 
       return result;
 
     } catch (error) {
-      // 4. Defensive fallback on error to prevent pipeline blockage
-      console.error(JSON.stringify({
-        level: 'critical',
-        message: 'VelocityRule evaluation failed',
+      this.logger.fatal({
         ruleId: this.ruleId,
         transactionId: transaction.transactionId,
         error: error instanceof Error ? error.message : 'Unknown error'
-      }));
-
-      return Object.freeze({
-        isSuspicious: false,
-        riskScore: 0.0,
-        reason: 'Rule execution error, defaulting to safe'
-      });
+      }, 'VelocityRule evaluation failed');
+      throw error;
     } finally {
-      // 5. Instrumentation
       const end = process.hrtime.bigint();
       const latency = Number(end - start) / 1e9;
-      this.metrics.labels(this.ruleId, environment).observe(latency);
+      this.metrics.labels(this.ruleId, this.environment).observe(latency);
     }
   }
 }

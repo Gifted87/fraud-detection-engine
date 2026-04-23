@@ -1,19 +1,16 @@
 import { TransactionFactory } from './index';
-import { CryptoValidator } from './security/crypto-validator.service';
+import { CryptoManager } from '../../utils/security/crypto';
 
 describe('TransactionFactory', () => {
   beforeAll(() => {
-    (CryptoValidator as any).instance = null;
-    CryptoValidator.initialize('test-key');
+    (CryptoManager as any).instance = null;
+    CryptoManager.initialize(
+      'test-enc-key',
+      'test-salt-long-enough',
+      '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA1PSK//wZg2vQhgUBDn2HvG0Y8IVau0iGjFBw4TBvGSc=\n-----END PUBLIC KEY-----',
+      '-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIC8Wb4tn/NTE4alDqkPL/Hgd7V9fE4rUCN3JqC4wHMn9\n-----END PRIVATE KEY-----'
+    );
   });
-
-  const baseArgs = [
-    'userid-123' as any,
-    'user-from' as any,
-    'merch-456' as any,
-    { value: 100n, currency: 'USD' } as any,
-    { latitude: 0, longitude: 0, ipAddress: '0.0.0.0' } as any,
-  ] as const;
 
   it('should create a TransactionInitiated envelope', async () => {
     const envelope = await TransactionFactory.createTransactionInitiated(
@@ -21,7 +18,7 @@ describe('TransactionFactory', () => {
       'u1' as any,
       'm1' as any,
       { value: 50n, currency: 'USD' } as any,
-      {} as any
+      { latitude: 0, longitude: 0, ipAddress: '127.0.0.1', deviceFingerprint: 'f', userAgent: 'u' } as any
     );
     expect(envelope.payload.type).toBe('TransactionInitiated');
     expect(envelope.payload.transactionId).toBe('tx123');
@@ -34,7 +31,7 @@ describe('TransactionFactory', () => {
       'u1' as any,
       'm1' as any,
       { value: 50n, currency: 'USD' } as any,
-      {} as any,
+      { latitude: 0, longitude: 0, ipAddress: '127.0.0.1', deviceFingerprint: 'f', userAgent: 'u' } as any,
       'validator-999'
     );
     expect(envelope.payload.type).toBe('TransactionValidated');
@@ -47,7 +44,7 @@ describe('TransactionFactory', () => {
       'u1' as any,
       'm1' as any,
       { value: 50n, currency: 'USD' } as any,
-      {} as any,
+      { latitude: 0, longitude: 0, ipAddress: '127.0.0.1', deviceFingerprint: 'f', userAgent: 'u' } as any,
       'Suspicious Activity',
       0.95
     );
@@ -55,7 +52,6 @@ describe('TransactionFactory', () => {
     expect(event.type).toBe('TransactionFlagged');
     expect(event.reason).toBe('Suspicious Activity');
     expect(event.riskScore).toBe(0.95);
-    // As an inner domain object it shouldn't have an envelope signature at the root level.
     expect((event as any).signature).toBeUndefined();
   });
 });
