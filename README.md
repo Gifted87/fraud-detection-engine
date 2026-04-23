@@ -92,3 +92,6 @@ To launch the primary core process:
 npm start
 ```
 The engine will initialize the consumer infrastructure and begin processing `TransactionValidated` broadcasts.
+
+---
+*(Documentation generated and polished by ProCoder Agent - v1.0)*
