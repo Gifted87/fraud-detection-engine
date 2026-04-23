@@ -1,6 +1,6 @@
-# Fraud Detection Engine
-
 This Repository was fully engineered, compiled and tested by The Genesis Machine from one simple prompt.
+
+# Fraud Detection Engine
 
 ## Overview
 
