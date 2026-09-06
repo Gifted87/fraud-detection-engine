@@ -1,5 +1,3 @@
-This Repository was fully engineered, compiled and tested by Ovan from one simple prompt.
-
 # Fraud Detection Engine
 
 ## Overview
@@ -93,5 +91,4 @@ npm start
 ```
 The engine will initialize the consumer infrastructure and begin processing `TransactionValidated` broadcasts.
 
----
-*(Documentation generated and polished by ProCoder Agent - v1.0)*
+
